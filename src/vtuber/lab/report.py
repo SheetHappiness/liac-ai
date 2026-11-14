@@ -7,6 +7,7 @@ from vtuber.minds.omp import OMPTransport
 
 def summarize_run(reader) -> dict:
     records = [reader.load(row) for row in reader.rows]
+    records = [r for r in records if not r['data'].get('omitted')]
     final = {r['request_id']:r['data'] for r in records if r['kind']=='fast.finished'}
     starts = {r['request_id'] for r in records if r['kind']=='fast.started'}
     ttft, tokens, kv = [], [], []
@@ -69,8 +70,9 @@ def summarize_run(reader) -> dict:
                   [r['data'].get('elapsed_seconds',0) for r in records if r['kind']=='simulator.phase'])
     return dict(status='running_or_interrupted' if status=='running' else status,
         elapsed_seconds=elapsed,elapsed_scope='last captured lower bound' if status=='running' else 'recorded run',
-        partial=bool(status!='completed' or reader.manifest.get('capture_error') or reader.manifest.get('omitted_records')),
-        capture_error=reader.manifest.get('capture_error'),
+        partial=bool(status!='completed' or reader.manifest.get('capture_error') or reader.manifest.get('omitted_records') or reader.gaps),
+        capture_error=reader.manifest.get('capture_error') or ('Archive payload gaps detected' if reader.gaps else None),
+        capture_gaps=reader.gaps,
         turns=dict(user=sum(r['role']=='user' for r in reader.conversation),
                    simulated=sum(r['role']=='user' and r['origin']=='simulated' for r in reader.conversation),
                    autonomous=sum(r['origin']=='initiative' and r['status']=='completed' for r in reader.conversation)),

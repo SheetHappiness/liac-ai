@@ -129,6 +129,8 @@ def read_trace(path: Path) -> list[dict]:
     with index.open(encoding='utf-8') as stream:
         for line in stream:
             if not line.endswith('\n'):
+                rows.append(dict(sequence=len(rows)+1, time='', kind='capture.gap',
+                                 request_id='capture', file='', capture_gap='Incomplete trace index tail'))
                 break  # A writer/crash may leave an unfinished final record.
             row = json.loads(line)
             if (not isinstance(row, dict) or not isinstance(row.get('file'), str)
@@ -138,6 +140,7 @@ def read_trace(path: Path) -> list[dict]:
                 raise ValueError('Invalid trace index record')
             if (path / row['file']).resolve().parent != path.resolve():
                 raise ValueError('Trace file points outside this run')
-            if (path / row['file']).is_file():
-                rows.append(row)
+            if not (path / row['file']).is_file():
+                row['capture_gap'] = 'Indexed payload is missing: '+row['file']
+            rows.append(row)
     return rows

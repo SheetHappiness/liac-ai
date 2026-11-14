@@ -149,7 +149,8 @@ class SimulationController:
                     request_id = new_id('simulator')
                     self._phase('generating', action_id=request_id)
                     self._pending = asyncio.create_task(self.simulator.next_action(tuple(self.history),
-                        session=self.session, remaining_turns=max(0,turns-self.turns) if turns else 100000))
+                        request_id=request_id, session=self.session,
+                        remaining_turns=max(0,turns-self.turns) if turns else 100000))
                     try:
                         action = await self._pending
                     except asyncio.CancelledError:
@@ -160,13 +161,15 @@ class SimulationController:
                         self._pending = None
                     if self._stopped or generation != self._generation:
                         continue
+                    message = UserMessage(action.text,self.character_id) if action.kind == 'message' else None
                     emit_trace(self.trace, 'simulator.action', request_id,
-                               action=action.__dict__, session=self.session)
+                               action=action.__dict__, session=self.session,
+                               turn_id=message.turn_id if message else None,
+                               event_id=message.event_id if message else None)
                     if action.kind == 'finish':
                         self._phase('finished_early', reason=action.reason)
                         break
                     if action.kind == 'message':
-                        message = UserMessage(action.text,self.character_id)
                         if self.on_input:
                             self.on_input(message, 'simulated', self.session)
                         self.observe(VisibleMessage(message.turn_id,'user',message.text,'simulated',self.session))

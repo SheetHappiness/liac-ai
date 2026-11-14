@@ -4,7 +4,6 @@ import math
 from dataclasses import asdict, replace
 from importlib.resources import files
 
-from vtuber.contracts.events import new_id
 from vtuber.contracts.trace import emit_trace
 from vtuber.minds.omp import OMPTransport
 from vtuber.minds.omp import OMPSettings
@@ -33,7 +32,8 @@ class OMPUserSimulator:
         self.session = None
         self.diagnostics = {}
 
-    async def next_action(self, history: tuple[VisibleMessage,...], *, session: int, remaining_turns: int) -> SimulationAction:
+    async def next_action(self, history: tuple[VisibleMessage,...], *, request_id: str,
+                          session: int, remaining_turns: int) -> SimulationAction:
         if self.session != session:
             if self.transport:
                 await self.transport.close()
@@ -48,7 +48,7 @@ class OMPUserSimulator:
         data['suggested_session_target'] = max(1,math.ceil((remaining_turns+
             sum(m.role=='user' for m in history))/max(1,len(self.scenario.get('sessions',[])))))
         prompt = json.dumps(data,ensure_ascii=False)
-        rid = new_id('simulator')
+        rid = request_id
         emit_trace(self.trace,'simulator.prompt',rid,prompt=prompt,session=session,model=self.settings.model)
         text = await self.transport.request(prompt,request_id=rid)
         emit_trace(self.trace,'simulator.response',rid,text=text)

@@ -185,3 +185,33 @@ Full long-provider testing, a completed smoke, multi-hour UI responsiveness,
 real compaction/pressure/restart/concurrency acceptance and subjective assessment
 are deferred. Native Computer Use was stopped by the user's Escape key; no further
 window actions were performed. The source tooling is available for that later run.
+
+## Review corrections — 2026-11-14
+
+The follow-up fixes preserve the existing archive format and cognition:
+
+- Missing indexed payloads and incomplete index tails remain visible as capture
+  gaps. Omission markers are excluded from metric calculations; summaries expose
+  gaps and mark the run partial. Historical context also reports partial capture.
+- Resume restores the capture cursor from recorded Journal sequences. Existing
+  events are not emitted again; new events still appear. Closing a continuation
+  retains earlier capture errors and adds omitted-record counts across segments.
+- Fast selection loads related Luna and decision records from the archive across
+  timeline pages and segments. Output details retain both Fast and Luna results.
+- A started turn without a captured terminal record retains an interrupted
+  assistant row and its latest captured partial. Runtime restart cancellation
+  supplies the recorded reason without creating a duplicate conversation row.
+- Simulator prompt, OMP request, response and accepted action share one request
+  ID. The action records the generated turn and event IDs for message correlation.
+
+Local verification: **36 targeted unittest checks passed** using Python 3.14,
+including offscreen Qt checks. New regressions first failed on the reviewed
+behavior, then passed after correction. Checks inject a missing payload, an
+omission marker, repeated capture after resume, a persisted unfinished streaming
+turn followed by real Runtime recovery, and a Fast selection whose Luna decision
+is outside the visible page. Simulator transport is stubbed; no provider is called.
+
+This does not recover deleted payloads or invent links for old simulator records
+that lacked correlation IDs. It labels missing evidence. No full simulation,
+provider run, native UI automation or forced operating-system process kill was
+performed for these corrections. Long-provider acceptance remains deferred.

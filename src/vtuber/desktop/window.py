@@ -13,7 +13,7 @@ from PySide6.QtWidgets import (QComboBox, QFileDialog, QFormLayout, QGroupBox, Q
 
 from vtuber.app import Config
 from vtuber.desktop.bridge import RuntimeWorker
-from vtuber.desktop.reader import TraceReader, details, history
+from vtuber.desktop.reader import TraceReader
 from vtuber.minds.lmstudio import LMStudioSettings
 from vtuber.minds.omp import OMPSettings
 from vtuber.desktop.models import ConversationView
@@ -308,6 +308,7 @@ class MainWindow(QMainWindow):
 
     @Slot(str)
     def _ready(self, path):
+        self.run_reader = None
         self.trace_path = Path(path)
         self.settings.hide()
         for button in (self.send, self.cancel, self.retry):
@@ -409,9 +410,11 @@ class MainWindow(QMainWindow):
         record = self.records[index]
         key = record['row']['request_id']
         self.selection.setText(record['row']['kind'] + '\n' + key)
-        related = [r for r in self.records if r['row']['request_id'] == key and r['path'] == record['path']]
         self._reading_history = False
-        self.reader.load(lambda: {'records': details(related), 'selected': record['row']['sequence']})
+        path = self.trace_path or Path(record['path'])
+        archived = self.run_reader
+        self.reader.load(lambda: {'records': (archived or RunReader(path)).related(key),
+                                 'selected': record['row']['sequence']})
 
     @Slot(int, object, str)
     def _loaded(self, token, result, error):
@@ -440,7 +443,8 @@ class MainWindow(QMainWindow):
             self._filter()
             if self.records:
                 self.requests.setCurrentRow(0)
-            self.statusBar().showMessage('Saved trace · unfinished requests may have been interrupted')
+            self.statusBar().showMessage('Saved trace · '+('partial capture; inspect summary gaps' if
+                result['summary']['partial'] else 'captured history'))
             return
         rows = result['records']
         if not rows:
@@ -454,10 +458,17 @@ class MainWindow(QMainWindow):
         response = by_kind.get('deep.response')
         terminal = by_kind.get('deep.failed') or by_kind.get('deep.cancelled')
         decision_data = by_kind.get('deep.decision', {}).get('decision')
-        self._set(self.output, finish or {'response': response, 'terminal': terminal,
+        luna_output = {'response': response, 'terminal': terminal,
                   'proposal':by_kind.get('deep.decision',{}).get('result'),
-                  'decision': decision_data} if finish or response or terminal or decision_data else
-                  by_kind.get('fast.progress') or list(by_kind.values()))
+                  'decision': decision_data}
+        has_luna = response or terminal or decision_data
+        if finish and has_luna:
+            output = {'fast': finish, 'luna': luna_output}
+        elif finish or has_luna:
+            output = finish or luna_output
+        else:
+            output = by_kind.get('fast.progress') or list(by_kind.values())
+        self._set(self.output, output)
         fast_context = by_kind.get('fast.context')
         omp_context = by_kind.get('omp.context')
         if fast_context:
@@ -577,6 +588,7 @@ class MainWindow(QMainWindow):
         for i,record in enumerate(self.records):
             if record['row']['request_id']==turn_id:
                 self.requests.setCurrentRow(i)
+                self._select(i)
                 return
         if self.run_reader:
             self.reader.load(lambda:dict(records=self.run_reader.related(turn_id),selected=-1))

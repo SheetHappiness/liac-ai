@@ -81,6 +81,29 @@ class BridgeTests(unittest.TestCase):
 
 
 class WindowTests(unittest.TestCase):
+    def test_fast_selection_includes_luna_outside_visible_page(self):
+        from vtuber.desktop.window import MainWindow
+        from vtuber.tracing import TraceRecorder
+        with tempfile.TemporaryDirectory() as folder:
+            trace = TraceRecorder(Path(folder))
+            trace('fast.started', 't', {'message': {'text': 'hello'}})
+            trace('fast.finished', 't', {'text': 'hi', 'status': 'completed'})
+            for i in range(201):
+                trace('simulator.phase', 'simulation', {'phase': str(i)})
+            trace('deep.started', 'd', {'request': {'events': [{'turn_id': 't'}]}})
+            snapshot = {'state': {'context_note': 'remember hello', 'revision': 1}, 'epoch': {'version': 1}}
+            trace('deep.decision', 'd', {'before': snapshot, 'after': snapshot,
+                                       'decision': {'acknowledged': True}})
+            window = MainWindow(root=Path(folder))
+            window.load_history(trace.path)
+            until(lambda: window.run_reader is not None)
+            window._select_turn('t')
+            try:
+                until(lambda: 'deep.decision' in window.metrics.toPlainText())
+                self.assertIn('acknowledged', window.changes.toPlainText())
+            finally:
+                window.close()
+
     def test_paged_model_and_stale_detail_completion(self):
         from vtuber.desktop.window import MainWindow
         window = MainWindow()

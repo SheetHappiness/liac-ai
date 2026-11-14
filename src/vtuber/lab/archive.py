@@ -55,6 +55,12 @@ class RunArchive:
         # Acquire ownership before creating another capture segment.
         archive = cls(path, None, manifest)
         try:
+            reader = RunReader(path)
+            archive._cursor = max((reader.load(r)['data'].get('event', {}).get('sequence', 0)
+                                  for r in reader.rows), default=0)
+            if reader.gaps:
+                manifest['capture_error'] = '; '.join(filter(None, [manifest.get('capture_error'),
+                    f'Archive contains {len(reader.gaps)} capture gaps']))
             used = sum(file.stat().st_size for segment in manifest.get('segments',['.'])
                        for file in owned(path,segment).glob('*.json*') if file.is_file())
             archive.trace = QueuedTraceRecorder(path/'segments',max_bytes=max(0,128*1024*1024-used))
@@ -131,8 +137,9 @@ class RunArchive:
                 await self.trace.aclose()
             self.manifest.update(status=status, reason=reason, ended_at=utc_now(),
                 elapsed_seconds=self._previous_elapsed+monotonic()-self._started,
-                capture_error=self.trace.error if self.trace else None,
-                omitted_records=self.trace.dropped if self.trace else 0)
+                capture_error='; '.join(dict.fromkeys(filter(None, [self.manifest.get('capture_error'),
+                    self.trace.error if self.trace else None]))) or None,
+                omitted_records=self.manifest.get('omitted_records', 0)+(self.trace.dropped if self.trace else 0))
             await asyncio.to_thread(write_json, self.path/'run.json', self.manifest)
         finally:
             self._lease.close()
@@ -153,6 +160,8 @@ class RunReader:
         self._seen_events = set()
         self._context_order = 0
         self._session = 1
+        self.gaps = []
+        self._unfinished = {}
         for segment in self.manifest.get('segments', ['.']):
             folder = owned(self.path, segment)
             for row in read_trace(folder):
@@ -160,15 +169,24 @@ class RunReader:
                 self.rows.append(record)
                 self._requests.setdefault(row['request_id'], []).append(record)
                 data = self.load(record)['data']
+                if data.get('omitted'):
+                    self.gaps.append(dict(ordinal=record['ordinal'], reason=data.get('reason')))
+                    continue
                 self._index(record, data)
+        self.conversation.extend(self._unfinished.values())
         self.conversation.sort(key=lambda r: r['order'])
 
     @staticmethod
     def load(row):
+        if row.get('capture_gap'):
+            return dict(row, data={'omitted': True, 'reason': row['capture_gap']})
         target = owned(Path(row['path']), row['file'])
-        if target.stat().st_size > 3*1024*1024:
-            return dict(row, data={'omitted':True, 'reason':'Preview file exceeds 3 MiB'})
-        return json.loads(target.read_text(encoding='utf-8'))
+        try:
+            if target.stat().st_size > 3*1024*1024:
+                return dict(row, data={'omitted':True, 'reason':'Preview file exceeds 3 MiB'})
+            return json.loads(target.read_text(encoding='utf-8'))
+        except (OSError, ValueError):
+            return dict(row, data={'omitted': True, 'reason': 'Payload missing or unreadable: '+row['file']})
 
     def _context(self, record, snapshot):
         if isinstance(snapshot, dict) and 'state' in snapshot and 'epoch' in snapshot:
@@ -186,17 +204,25 @@ class RunReader:
             if proposal := message.get('proposal_id'):
                 self._turn_requests.setdefault(rid,set()).add(proposal.removeprefix('initiative_'))
             self._context(row, data.get('snapshot'))
+            self._unfinished[rid] = dict(turn_id=rid, text='', role='assistant',
+                origin='initiative' if 'proposal_id' in message else 'reply',
+                session=self._origins.get(rid, {}).get('session', self._session),
+                status='interrupted', reason='No terminal record captured',
+                order=row['ordinal']+.5, time=row['time'])
             if 'text' in message:
                 meta = self._origins.get(rid, {})
                 self.conversation.append(dict(turn_id=rid, text=message['text'], role='user',
                     origin=meta.get('origin','manual'), session=meta.get('session',1), status='completed',
                     order=row['ordinal'], time=row['time']))
         elif kind == 'fast.finished':
+            self._unfinished.pop(rid, None)
             self.conversation.append(dict(turn_id=rid, text=data.get('text') or data.get('partial',''),
                 role='assistant', origin='initiative' if 'proposal_id' in self._inputs.get(rid,{}) else 'reply',
                 status=data.get('status','unknown'), reason=data.get('reason',''),
                 order=row['ordinal'], time=row['time'],
                 session=self._origins.get(rid,{}).get('session',self._session)))
+        elif kind == 'fast.progress' and rid in self._unfinished:
+            self._unfinished[rid]['text'] = data.get('partial', '')
         elif kind == 'deep.started':
             request = data.get('request', {})
             for event in request.get('events', []):
@@ -212,12 +238,16 @@ class RunReader:
             pass
         elif kind == 'runtime.journal' or kind.startswith('initiative.'):
             event = data.get('event', {})
+            if event.get('kind') == 'character.reply.cancelled' and event.get('turn_id') in self._unfinished:
+                self._unfinished[event['turn_id']]['reason'] = json.loads(event['payload_json']).get('reason', '')
             if event.get('kind','').startswith('initiative.'):
                 if event['kind']=='initiative.proposed':
                     self._turn_requests.setdefault(rid,set()).add(event['event_id'].removeprefix('initiative_'))
                 for candidate in (event.get('causation_id'), event.get('event_id')):
                     if candidate:
                         self._turn_requests.setdefault(candidate, set()).add(rid)
+        elif kind == 'simulator.action' and data.get('turn_id'):
+            self._turn_requests.setdefault(data['turn_id'], set()).add(rid)
         elif kind == 'simulator.boundary':
             self.conversation.append(dict(turn_id=rid, role='boundary', origin='simulator',
                 text=data.get('reason','Session boundary'), status='boundary',
@@ -241,7 +271,7 @@ class RunReader:
             return {'status':'unavailable', 'reason':'No historical context captured'}
         best = max(candidates, key=lambda r:(r['sequence'],r['ordinal']))
         snapshot = best['snapshot']
-        return dict(status='partial' if self.manifest.get('capture_error') else 'captured',
+        return dict(status='partial' if self.manifest.get('capture_error') or self.gaps or self.manifest.get('omitted_records') else 'captured',
                     markdown=snapshot['state']['context_note'], epoch=snapshot['epoch'],
                     revision=snapshot['state']['revision'], sequence=best['sequence'])
 

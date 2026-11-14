@@ -27,7 +27,9 @@ class TraceTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as folder:
             path = Path(folder)
             (path / 'index.jsonl').write_text('{"kind":', encoding='utf-8')
-            self.assertEqual(read_trace(path), [])
+            rows = read_trace(path)
+            self.assertEqual(rows[0]['kind'], 'capture.gap')
+            self.assertIn('Incomplete', rows[0]['capture_gap'])
 
     def test_trace_directory_failure_is_nonfatal(self):
         with tempfile.TemporaryDirectory() as folder:
