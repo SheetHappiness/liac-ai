@@ -274,6 +274,7 @@ class RunReader:
 
     def related(self, turn_id: str) -> list[dict]:
         requests = {turn_id} | self._turn_requests.get(turn_id,set())
+        requests.update(candidate for candidate, linked in self._turn_requests.items() if turn_id in linked)
         records = [r for rid in requests for r in self._requests.get(rid,[])]
         return [dict(self.load(r), path=r['path']) for r in sorted(records,key=lambda r:r['ordinal'])]
 

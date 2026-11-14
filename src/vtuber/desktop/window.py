@@ -241,18 +241,32 @@ class MainWindow(QMainWindow):
         self.tabs = QTabWidget()
         self.input = self._view()
         self.output = self._view()
-        self.context = self._view()
-        self.context.setLineWrapMode(QPlainTextEdit.LineWrapMode.WidgetWidth)
+        self.model_contexts = QWidget()
+        context_layout = QHBoxLayout(self.model_contexts)
+        self.fast_context = self._view()
+        self.fast_context.setLineWrapMode(QPlainTextEdit.LineWrapMode.WidgetWidth)
+        self.luna_context = self._view()
+        self.luna_context.setLineWrapMode(QPlainTextEdit.LineWrapMode.WidgetWidth)
+        for title, view in [('Bolt / Fast model', self.fast_context), ('Luna', self.luna_context)]:
+            pane = QWidget()
+            pane_layout = QVBoxLayout(pane)
+            pane_layout.setContentsMargins(0, 0, 0, 0)
+            pane_layout.addWidget(QLabel(title))
+            pane_layout.addWidget(view, 1)
+            context_layout.addWidget(pane, 1)
+        self.working_markdown = self._view()
+        self.working_markdown.setLineWrapMode(QPlainTextEdit.LineWrapMode.WidgetWidth)
         self.changes = self._view()
         self.metrics = self._view()
         self.raw = self._view()
         self.state_view = self._view()
         self.events_view = self._view()
-        for name, view in [('Input / Prompt', self.input), ('Output / Proposals', self.output), ('Context', self.context),
+        for name, view in [('Input / Prompt', self.input), ('Output / Proposals', self.output), ('Model Contexts', self.model_contexts),
+                ('Working Markdown', self.working_markdown),
                 ('Context / Diff', self.changes), ('Metrics', self.metrics), ('Raw JSON', self.raw),
                 ('Runtime state', self.state_view), ('Journal', self.events_view)]:
             self.tabs.addTab(view, name)
-        self.tabs.setCurrentWidget(self.context)
+        self.tabs.setCurrentWidget(self.model_contexts)
         right_layout.addWidget(self.tabs, 1)
         split.addWidget(right)
         split.setSizes([280, 430, 650])
@@ -389,7 +403,11 @@ class MainWindow(QMainWindow):
         self._filter()
         selected = self.requests.currentRow()
         if selected < 0:
-            self.requests.setCurrentRow(0)
+            if row['kind'] not in ('runtime.lifecycle', 'runtime.status', 'deep.phase'):
+                self.requests.setCurrentRow(len(self.records) - 1)
+        elif (self.records[selected]['row']['kind'] not in ('fast.context', 'deep.prompt')
+              and row['kind'] in ('fast.context', 'deep.prompt')):
+            self.requests.setCurrentRow(len(self.records) - 1)
         elif self.records[selected]['row']['request_id'] == row['request_id']:
             self._select(selected)
 
@@ -442,7 +460,11 @@ class MainWindow(QMainWindow):
             self._reading_history = False
             self._filter()
             if self.records:
-                self.requests.setCurrentRow(0)
+                preferred = next((i for i in range(len(self.records) - 1, -1, -1)
+                                  if self.records[i]['row']['kind'] in ('fast.context', 'deep.prompt')),
+                                 next((i for i in range(len(self.records) - 1, -1, -1)
+                                       if self.records[i]['row']['kind'] == 'omp.context'), 0))
+                self.requests.setCurrentRow(preferred)
             self.statusBar().showMessage('Saved trace · '+('partial capture; inspect summary gaps' if
                 result['summary']['partial'] else 'captured history'))
             return
@@ -450,6 +472,7 @@ class MainWindow(QMainWindow):
         if not rows:
             self._set(self.raw,'No related records were captured.')
             return
+        selected = next((r for r in rows if r['sequence'] == result['selected']), rows[-1])
         by_kind = {r['kind']: r['data'] for r in rows}
         first = by_kind.get('fast.started', {})
         deep = by_kind.get('deep.started', {})
@@ -473,14 +496,37 @@ class MainWindow(QMainWindow):
         fast_context = by_kind.get('fast.context')
         omp_context = by_kind.get('omp.context')
         if fast_context:
-            self._set(self.context, 'Exact Fast prompt\n\n' + fast_context['prompt'] +
-                      '\n\nMessages before template rendering\n\n' + pretty(fast_context['messages']))
-        elif omp_context:
-            self._set(self.context, format_omp_context(omp_context))
+            fast_text = ('Exact Fast prompt\n\n' + fast_context['prompt'] +
+                         '\n\nMessages before template rendering\n\n' + pretty(fast_context['messages']))
         else:
-            self._set(self.context, by_kind.get('deep.prompt') or deep or
-                      {'notice': 'Exact prompt was not captured (fake backend or old trace).', **first})
+            fast_text = 'No captured Fast model context is available for this event.'
+        luna_parts = []
+        if by_kind.get('deep.prompt'):
+            luna_parts.append('Luna request\n\n' + by_kind['deep.prompt']['prompt'])
+        if omp_context:
+            luna_parts.append(format_omp_context(omp_context))
+        if not luna_parts:
+            luna_parts.append('No captured Luna context is available for this event.')
+        self.fast_context.setPlainText(fast_text)
+        self.luna_context.setPlainText('\n\n'.join(luna_parts))
         decision = by_kind.get('deep.applied') or by_kind.get('deep.decision')
+        markdown = None
+        if selected['kind'] == 'deep.applied' and decision:
+            markdown = decision.get('after', {}).get('state', {}).get('context_note')
+        elif selected['kind'].startswith('fast.'):
+            markdown = first.get('snapshot', {}).get('state', {}).get('context_note')
+        elif selected['kind'].startswith('deep.'):
+            request = deep.get('request', {})
+            markdown = request.get('snapshot', {}).get('state', {}).get('context_note')
+        if markdown is None:
+            request = deep.get('request', {})
+            markdown = (decision or {}).get('after', {}).get('state', {}).get('context_note')
+            if markdown is None:
+                markdown = first.get('snapshot', {}).get('state', {}).get('context_note')
+            if markdown is None:
+                markdown = request.get('snapshot', {}).get('state', {}).get('context_note')
+        self.working_markdown.setPlainText(markdown if markdown is not None else
+            'No captured working Markdown is available for this event.')
         if decision:
             before, after = decision['before'], decision['after']
             old = before['state']['context_note'].splitlines()
@@ -494,7 +540,6 @@ class MainWindow(QMainWindow):
                   'context': (fast_context or {}).get('metadata'), 'omp': by_kind.get('omp.completed'),
                   'deep': (decision or {}).get('metrics'),
                   'lifecycle': [r['kind'] for r in rows]})
-        selected = next((r for r in rows if r['sequence'] == result['selected']), rows[-1])
         self._set(self.raw, selected)
 
     def _set(self, view, value):
@@ -597,9 +642,11 @@ class MainWindow(QMainWindow):
     def _context_point(self,index):
         snapshot = self.context_points.itemData(index)
         if snapshot:
-            self._set(self.changes,'Captured Markdown\n\n'+snapshot['state']['context_note']+
+            markdown = snapshot['state']['context_note']
+            self.working_markdown.setPlainText(markdown)
+            self.tabs.setCurrentWidget(self.working_markdown)
+            self._set(self.changes,'Captured Markdown\n\n'+markdown+
                       '\n\nContext Epoch\n'+pretty(snapshot['epoch']))
-            self.tabs.setCurrentWidget(self.changes)
 
     def _page(self,delta):
         if not self.run_reader:
@@ -625,7 +672,12 @@ class MainWindow(QMainWindow):
     def _copy(self):
         from PySide6.QtWidgets import QApplication
         view = self.tabs.currentWidget()
-        QApplication.clipboard().setText(view.textCursor().selectedText() or view.toPlainText())
+        if view is self.model_contexts:
+            text = ('Bolt / Fast model\n\n' + self.fast_context.toPlainText() +
+                    '\n\nLuna\n\n' + self.luna_context.toPlainText())
+        else:
+            text = view.textCursor().selectedText() or view.toPlainText()
+        QApplication.clipboard().setText(text)
 
     def _open_json(self):
         index = self.requests.currentRow()
