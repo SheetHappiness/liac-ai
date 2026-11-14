@@ -215,3 +215,21 @@ This does not recover deleted payloads or invent links for old simulator records
 that lacked correlation IDs. It labels missing evidence. No full simulation,
 provider run, native UI automation or forced operating-system process kill was
 performed for these corrections. Long-provider acceptance remains deferred.
+
+Second review corrections (same date): segment record counts are saved at checkpoints
+and close. A missing index with recorded activity is a capture gap; a genuinely
+empty new segment is valid. Older archives can also reveal a missing index through
+remaining payload files. If an older archive has neither segment counts nor any
+remaining trace files, its prior capture activity cannot be established.
+
+When `fast.finished` is absent, captured terminal Journal events restore completed,
+cancelled or failed conversation results with `journal_terminal` provenance and
+the source event ID. Completed text comes from that event; cancellation/failure
+retains captured partial speech. Without a terminal event the row stays interrupted.
+No Fast timing or token measurements are reconstructed from Journal events.
+Simulator visible messages now carry status consistently during live use and resume;
+its role explains that incomplete speech must not be treated as a completed statement.
+
+The three new regressions failed before the fixes. **39 targeted local checks passed**
+afterward (archive recovery, simulator history, tracing, offscreen desktop and Runtime
+lifecycle). Provider tests and the full long simulation remain deferred.

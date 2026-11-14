@@ -69,6 +69,10 @@ class QueuedTraceRecorder:
         return self._error or self.recorder.error
 
     @property
+    def records_written(self):
+        return self.recorder._sequence
+
+    @property
     def on_record(self):
         return self.recorder.on_record
 
@@ -119,11 +123,14 @@ class QueuedTraceRecorder:
         await asyncio.to_thread(self.thread.join)
 
 
-def read_trace(path: Path) -> list[dict]:
+def read_trace(path: Path, *, expected_records: int = 0) -> list[dict]:
     index = path / 'index.jsonl'
     if index.resolve().parent != path.resolve():
         raise ValueError('Trace index points outside this run')
     if not index.exists():
+        if expected_records or any(path.glob('[0-9]*.json')):
+            return [dict(sequence=0, time='', kind='capture.gap', request_id='capture',
+                         file='', capture_gap='Trace index is missing for a recorded segment')]
         return []
     rows = []
     with index.open(encoding='utf-8') as stream:

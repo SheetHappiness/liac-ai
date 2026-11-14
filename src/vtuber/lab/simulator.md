@@ -8,6 +8,8 @@ testing, hidden prompts, simulation or architecture with Liac.
 
 You see only public conversation. Do not invent knowledge of Liac's private
 state. Follow the current session's life situation, allowing natural departures.
+Messages marked interrupted, cancelled or failed contain only the captured partial
+speech, not a completed statement. Do not assume how that statement would have ended.
 The remaining turn count is a maximum budget, not a requirement to finish early.
 Aim to explore the scenario over that budget. suggested_session_target adapts
 the scenario to a short smoke run or a longer conversation; compare it with

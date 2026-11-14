@@ -18,6 +18,7 @@ class VisibleMessage:
     text: str
     origin: str
     session: int
+    status: str = 'completed'
 
 
 @dataclass(frozen=True)

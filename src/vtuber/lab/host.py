@@ -101,7 +101,7 @@ class LabHost:
             for row in prior.conversation:
                 if row['role'] in ('user','assistant'):
                     self.controller.observe(VisibleMessage(row['turn_id'],row['role'],row['text'],
-                        row['origin'],row.get('session',1)))
+                        row['origin'],row.get('session',1),row['status']))
         self.simulation_task = asyncio.create_task(self.controller.run(turns=options.get('turns'),
             duration_seconds=options.get('duration_seconds')),name='liac-simulation')
 
@@ -131,9 +131,10 @@ class LabHost:
         elif output.kind in ('reply.completed','reply.cancelled','reply.failed'):
             partial = self._partials.pop(output.turn_id,'')
             if self.controller and (output.kind == 'reply.completed' or partial):
-                text = output.text if output.kind == 'reply.completed' else partial+' [interrupted]'
+                text = output.text if output.kind == 'reply.completed' else partial
                 self.controller.observe(VisibleMessage(output.turn_id,'assistant',text,
-                    'initiative' if output.turn_id.startswith('initiative_turn_') else 'reply',self.controller.session))
+                    'initiative' if output.turn_id.startswith('initiative_turn_') else 'reply',
+                    self.controller.session,output.kind.removeprefix('reply.')))
         if self.output:
             self.output(output)
 
@@ -148,6 +149,8 @@ class LabHost:
             self._checkpoint = monotonic()
             self.archive.manifest['elapsed_seconds'] = (self.archive._previous_elapsed+
                                                         monotonic()-self.archive._started)
+            segment = str(self.archive.trace.path.relative_to(self.archive.path))
+            self.archive.manifest.setdefault('segment_records', {})[segment] = self.archive.trace.records_written
             await asyncio.to_thread(write_json,self.archive.path/'run.json',self.archive.manifest)
         return state
 

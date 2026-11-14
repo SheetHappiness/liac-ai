@@ -135,6 +135,8 @@ class RunArchive:
         try:
             if self.trace:
                 await self.trace.aclose()
+                segment = str(self.trace.path.relative_to(self.path))
+                self.manifest.setdefault('segment_records', {})[segment] = self.trace.records_written
             self.manifest.update(status=status, reason=reason, ended_at=utc_now(),
                 elapsed_seconds=self._previous_elapsed+monotonic()-self._started,
                 capture_error='; '.join(dict.fromkeys(filter(None, [self.manifest.get('capture_error'),
@@ -162,9 +164,11 @@ class RunReader:
         self._session = 1
         self.gaps = []
         self._unfinished = {}
+        self._terminals = {}
         for segment in self.manifest.get('segments', ['.']):
             folder = owned(self.path, segment)
-            for row in read_trace(folder):
+            expected = self.manifest.get('segment_records', {}).get(segment, 0)
+            for row in read_trace(folder, expected_records=expected):
                 record = dict(row, path=str(folder), ordinal=len(self.rows))
                 self.rows.append(record)
                 self._requests.setdefault(row['request_id'], []).append(record)
@@ -173,6 +177,14 @@ class RunReader:
                     self.gaps.append(dict(ordinal=record['ordinal'], reason=data.get('reason')))
                     continue
                 self._index(record, data)
+        for turn, reply in self._unfinished.items():
+            if event := self._terminals.get(turn):
+                status = event['kind'].removeprefix('character.reply.')
+                payload = json.loads(event['payload_json'])
+                reply.update(status=status, reason=payload.get('reason', ''),
+                             provenance='journal_terminal', terminal_event_id=event['event_id'])
+                if status == 'completed':
+                    reply['text'] = payload['text']
         self.conversation.extend(self._unfinished.values())
         self.conversation.sort(key=lambda r: r['order'])
 
@@ -238,8 +250,8 @@ class RunReader:
             pass
         elif kind == 'runtime.journal' or kind.startswith('initiative.'):
             event = data.get('event', {})
-            if event.get('kind') == 'character.reply.cancelled' and event.get('turn_id') in self._unfinished:
-                self._unfinished[event['turn_id']]['reason'] = json.loads(event['payload_json']).get('reason', '')
+            if event.get('kind') in ('character.reply.completed', 'character.reply.cancelled', 'character.reply.failed'):
+                self._terminals[event['turn_id']] = event
             if event.get('kind','').startswith('initiative.'):
                 if event['kind']=='initiative.proposed':
                     self._turn_requests.setdefault(rid,set()).add(event['event_id'].removeprefix('initiative_'))

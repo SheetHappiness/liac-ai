@@ -6,10 +6,83 @@ from pathlib import Path
 from vtuber.app import Config, open_runtime
 from vtuber.contracts.events import UserMessage
 from vtuber.lab.archive import RunArchive, RunReader
-from vtuber.tracing import TraceRecorder
+from vtuber.tracing import TraceRecorder, read_trace
 
 
 class RecoveryTests(unittest.IsolatedAsyncioTestCase):
+    async def test_missing_index_is_a_gap_but_empty_segment_is_valid(self):
+        with tempfile.TemporaryDirectory() as folder:
+            for active in (True, False):
+                with self.subTest(active=active):
+                    archive = RunArchive.create(Path(folder), Config())
+                    if active:
+                        archive.trace('fast.started', 't', {'message': {'text': 'hello'}})
+                        archive.trace('deep.started', 'd', {'request': {'events': []}})
+                    await archive.close('completed')
+                    if active:
+                        (archive.path/'index.jsonl').unlink()
+                        self.assertTrue(RunReader(archive.path).gaps)
+                        self.assertEqual(read_trace(archive.path)[0]['kind'], 'capture.gap')
+                        # Manifest evidence must survive loss of every payload too.
+                        for payload in archive.path.glob('[0-9]*.json'):
+                            payload.unlink()
+                    reader = RunReader(archive.path)
+                    self.assertEqual(reader.summary()['partial'], active)
+                    self.assertEqual(bool(reader.gaps), active)
+            archive = RunArchive.create(Path(folder), Config(), scenario={'id': 'test'})
+            archive.db.touch()
+            await archive.close('stopped')
+            resumed = RunArchive.resume(archive.path)
+            try:
+                self.assertFalse(RunReader(archive.path).gaps)
+            finally:
+                await resumed.close('completed')
+
+    async def test_journal_terminals_restore_results_without_inventing_metrics(self):
+        from dataclasses import asdict
+        from vtuber.contracts.events import Event
+        with tempfile.TemporaryDirectory() as folder:
+            for status in ('completed', 'cancelled', 'failed'):
+                with self.subTest(status=status):
+                    trace = TraceRecorder(Path(folder))
+                    trace('fast.started', 't', {'message': {'text': 'hello'}})
+                    trace('fast.progress', 't', {'partial': 'hel'})
+                    payload = {'text': 'hello world'} if status == 'completed' else {'reason': 'test reason'}
+                    event = Event.create('primary', 'character.reply.'+status, payload, turn_id='t')
+                    trace('runtime.journal', 't', {'event': asdict(event)})
+                    reader = RunReader(trace.path)
+                    reply = next(r for r in reader.conversation if r['role'] == 'assistant')
+                    self.assertEqual(reply['status'], status)
+                    self.assertEqual(reply['text'], 'hello world' if status == 'completed' else 'hel')
+                    self.assertEqual(reply['provenance'], 'journal_terminal')
+                    self.assertIsNone(reader.summary()['fast']['output_tokens'])
+                    trace('fast.finished', 't', {'status': status, 'text': payload.get('text', ''),
+                        'partial': 'hel', 'metrics': {'generation': {'output_tokens': 2}}})
+                    reader = RunReader(trace.path)
+                    self.assertEqual(sum(r['role'] == 'assistant' for r in reader.conversation), 1)
+                    self.assertEqual(reader.summary()['fast']['output_tokens'], 2)
+
+    async def test_resume_keeps_incomplete_status_in_simulator_prompt(self):
+        from types import SimpleNamespace
+        from unittest.mock import AsyncMock, patch
+        from vtuber.lab.host import LabHost
+        from vtuber.lab.simulator import render_simulator_prompt
+        with tempfile.TemporaryDirectory() as folder:
+            trace = TraceRecorder(Path(folder))
+            trace('fast.started', 't', {'message': {'text': 'hi'}})
+            trace('fast.progress', 't', {'partial': 'Well, I think...'})
+            host = LabHost(Config(), Path(folder), simulation={'scenario': {}, 'turns': 1}, resume=trace.path)
+            host.archive = SimpleNamespace(path=trace.path, manifest={}, trace=None)
+            host.runtime = SimpleNamespace(submit=AsyncMock())
+            with patch('vtuber.lab.host.SimulationController.run', new=AsyncMock()):
+                await host._start_controller()
+                await host.simulation_task
+            prompt = render_simulator_prompt(tuple(host.controller.history), session=1, remaining_turns=1)
+            import json
+            reply = next(r for r in json.loads(prompt)['visible_conversation'] if r['role'] == 'assistant')
+            self.assertEqual(reply['text'], 'Well, I think...')
+            self.assertEqual(reply['status'], 'interrupted')
+
     async def test_missing_payload_and_omissions_are_partial(self):
         with tempfile.TemporaryDirectory() as folder:
             for missing in (True, False):
@@ -77,7 +150,7 @@ class RecoveryTests(unittest.IsolatedAsyncioTestCase):
             await resumed.close('stopped')
             reader = RunReader(archive.path)
             reply = next(r for r in reader.conversation if r['role'] == 'assistant')
-            self.assertEqual(reply['status'], 'interrupted')
+            self.assertEqual(reply['status'], 'cancelled')
             self.assertEqual(reply['text'], 'hel')
             self.assertEqual(reply['reason'], 'process_restarted')
             self.assertEqual(sum(r['role'] == 'assistant' for r in reader.conversation), 1)
