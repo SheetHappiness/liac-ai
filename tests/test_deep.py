@@ -1,4 +1,5 @@
 import tempfile
+import json
 import unittest
 import asyncio
 from unittest.mock import patch
@@ -75,6 +76,11 @@ class DeepJournalTests(unittest.TestCase):
         request = self.journal.deep_request('primary', request_id='closed', max_events=1)
         self.assertEqual(request.snapshot.through_sequence, terminal.sequence)
         self.assertEqual(len(request.events), 4)
+        from vtuber.minds.luna import render_request
+        projected = json.loads(render_request(request))
+        self.assertEqual([item.get('status') for item in projected['new']],
+                         [None, None, 'cancelled', None])
+        self.assertEqual(projected['new'][2]['reason'], 'test')
         self.assertEqual(request.events[-1].payload['text'], 'actual reply')
 
     def test_deep_atomic_rollback(self):
@@ -193,6 +199,11 @@ class DeepJournalTests(unittest.TestCase):
         recovery = self.journal.deep_request('primary', request_id='recover', initiative_allowed=True)
         self.assertEqual(recovery.recovery_epoch, epoch)
         self.assertIn(newer.event_id, [e.event_id for e in recovery.compaction.events])
+        from vtuber.minds.luna import render_request
+        projected = json.loads(render_request(recovery))
+        self.assertEqual(projected['compaction']['prior_epoch'], ['summary'])
+        self.assertEqual([item['text'] for item in projected['new']], ['green correction', 'actual reply'])
+        self.assertEqual(projected['compaction']['through'], {'history': 0, 'new': 2})
         self.journal.apply_deep(recovery, DeepResult(3, recovery.request_id,
             initiative=InitiativeSpeak('still pending')))
         pending = self.journal.pending_initiative('primary')

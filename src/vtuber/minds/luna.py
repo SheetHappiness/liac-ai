@@ -1,7 +1,7 @@
 """Luna's bounded direct-context protocol over the existing OMP text transport."""
 from __future__ import annotations
 
-from dataclasses import asdict
+from datetime import datetime
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -75,7 +75,56 @@ def parse_result(text: str, request: DeepRequest) -> DeepResult:
 
 
 def render_request(request: DeepRequest) -> str:
-    return canonical_json(asdict(request))
+    def project(event):
+        payload = event.payload
+        kind = event.kind
+        if kind == 'user.message.completed':
+            return {'speaker': 'user', 'text': payload['text'], 'occurred_at': event.occurred_at}
+        if kind == 'character.reply.completed':
+            return {'speaker': 'liac', 'text': payload['text'], 'occurred_at': event.occurred_at}
+        if kind in ('character.reply.cancelled', 'character.reply.failed'):
+            return {'speaker': 'liac', 'status': kind.rsplit('.', 1)[-1],
+                    'reason': payload.get('reason', ''), 'occurred_at': event.occurred_at}
+        if kind == 'character.initiative.started':
+            return {'speaker': 'liac', 'status': 'started', 'intent': payload['intent'],
+                    'occurred_at': event.occurred_at}
+        if kind == 'initiative.proposed':
+            return {'status': 'proposed', 'intent': payload['intent'],
+                    'ready_at': payload['ready_at'], 'occurred_at': event.occurred_at}
+        if kind == 'initiative.closed':
+            return {'status': 'closed', 'reason': payload.get('reason', ''), 'occurred_at': event.occurred_at}
+        return None
+
+    events = {event.event_id: event for event in (*request.snapshot.recent_dialogue,
+        *(request.compaction.events if request.compaction else ()), *request.events)}
+    new_ids = {event.event_id for event in request.events}
+    history, new = [], []
+    covered = {'history': 0, 'new': 0}
+    for event in sorted(events.values(), key=lambda item: item.sequence):
+        item = project(event)
+        if item is None:
+            continue
+        section = 'new' if event.event_id in new_ids else 'history'
+        (new if section == 'new' else history).append(item)
+        if request.compaction and event.sequence <= request.compaction.cutoff:
+            covered[section] += 1
+    compaction = None
+    if request.compaction is not None:
+        prior = request.recovery_epoch
+        compaction = {'prior_epoch': ([item.text for item in prior.items]
+                       if prior is not None and prior.items != request.snapshot.epoch.items else None),
+                      'through': covered}
+    pending = request.pending_initiative.payload if request.pending_initiative else None
+    now = datetime.now().astimezone()
+    return canonical_json({
+        'current_time': now.isoformat(), 'timezone': now.tzname(),
+        'working_context': request.snapshot.state.context_note,
+        'epoch': [item.text for item in request.snapshot.epoch.items],
+        'history': history, 'new': new, 'compaction': compaction,
+        'initiative': {'allowed': request.initiative_allowed,
+            'pending': {'intent': pending['intent'], 'ready_at': pending['ready_at']} if pending else None},
+        'working_context_tokens': request.working_context_tokens,
+    })
 
 
 class LunaDeep:

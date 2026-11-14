@@ -2,6 +2,7 @@ import json
 import unittest
 from dataclasses import replace
 
+from vtuber.contracts.context import ContextEpoch, ContextItem
 from vtuber.contracts.deep import CompactionInput, DeepRequest, DeepResult, InitiativeCancel, InitiativeSpeak
 from vtuber.contracts.events import Event
 from vtuber.contracts.state import CharacterState, FastSnapshot
@@ -53,10 +54,49 @@ class LunaParserTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 parse_result(text, self.request)
 
-    def test_prompt_quotes_evidence(self):
-        text = render_request(self.request)
-        self.assertIn('green hat', text)
-        self.assertEqual(json.loads(text)['request_id'], 'request')
+    def test_projection_retains_evidence_without_duplicates(self):
+        def event(kind, payload, sequence):
+            return replace(Event.create('primary', kind, payload, event_id=f'id{sequence}',
+                occurred_at=f'2026-11-14T12:00:{sequence:02d}+00:00'), sequence=sequence,
+                recorded_at='database timestamp')
+        old = event('user.message.completed', {'text': '  old 🐈\n'}, 1)
+        reply = event('character.reply.completed', {'text': 'Exact reply'}, 2)
+        user = event('user.message.completed', {'text': 'new'}, 3)
+        cancelled = event('character.reply.cancelled', {'reason': 'preempted'}, 4)
+        started = event('character.initiative.started', {'intent': 'A thought', 'proposal_id': 'secret'}, 5)
+        failed = event('character.reply.failed', {'reason': 'error'}, 6)
+        pending = event('initiative.proposed', {'intent': 'Next thought', 'ready_at': '2026-11-14T13:00:00+00:00'}, 7)
+        epoch = ContextEpoch(1, 0, (ContextItem('Current epoch', ()),))
+        prior = ContextEpoch(2, 0, (ContextItem('Recovered epoch', ()),))
+        request = DeepRequest('private-id', FastSnapshot(CharacterState('primary', 3, 'Context'), 6,
+            (old, reply, user), epoch), 2, (user, cancelled, started, failed),
+            CompactionInput(4, (old, reply, user)), 2048, False, pending, prior)
+        data = json.loads(render_request(request))
+        self.assertEqual(data['working_context'], 'Context')
+        self.assertEqual(data['epoch'], ['Current epoch'])
+        self.assertEqual(data['compaction']['prior_epoch'], ['Recovered epoch'])
+        self.assertEqual(data['compaction']['through'], {'history': 2, 'new': 2})
+        self.assertEqual([x.get('text') for x in data['history']], ['  old 🐈\n', 'Exact reply'])
+        self.assertEqual([x.get('status') for x in data['new']], [None, 'cancelled', 'started', 'failed'])
+        self.assertEqual(data['new'][2]['intent'], 'A thought')
+        self.assertEqual(data['new'][3]['reason'], 'error')
+        self.assertEqual(data['new'][0]['occurred_at'], user.occurred_at)
+        self.assertEqual(data['initiative']['pending'], {'intent': 'Next thought', 'ready_at': pending.payload['ready_at']})
+        self.assertFalse(data['initiative']['allowed'])
+        self.assertIn('current_time', data)
+        self.assertIn('timezone', data)
+        self.assertNotIn('database timestamp', json.dumps(data))
+        self.assertNotIn('private-id', json.dumps(data))
+        self.assertNotIn('secret', json.dumps(data))
+        self.assertEqual(request.events[0], user)
+
+    def test_ordinary_prompt_has_no_compaction(self):
+        request = replace(self.request, compaction=None)
+        data = json.loads(render_request(request))
+        self.assertIsNone(data['compaction'])
+        self.assertEqual(data['history'], [])
+        self.assertEqual(data['new'][0]['text'], 'green hat')
+        self.assertEqual(data['new'][0]['speaker'], 'user')
 
 
 class FakeDeepTests(unittest.IsolatedAsyncioTestCase):
