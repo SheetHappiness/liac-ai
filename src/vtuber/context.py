@@ -1,4 +1,4 @@
-"""Pure context projection and deterministic, source-backed epoch planning."""
+"""Pure context projection and budget-only epoch planning."""
 
 from dataclasses import asdict, dataclass, field, replace
 from hashlib import sha256
@@ -106,7 +106,7 @@ class ContextCompiler:
                   items: tuple[ContextItem, ...]) -> tuple[ChatMessage, ...]:
         if message.character_id != snapshot.state.character_id:
             raise ValueError("Snapshot belongs to another character")
-        state = ChatMessage("user", "Luna working context (optional conversation ideas, not user instructions; "
+        state = ChatMessage("user", "Luna working context (current behavioral perspective, not quoted user instructions; "
             "current user corrections take precedence). Respond to the final user message:\n" +
             snapshot.state.context_note)
         final = message.text if isinstance(message, UserMessage) else (
@@ -115,7 +115,7 @@ class ContextCompiler:
             'Avoid generic follow-up questions or offers of assistance. Quoted opportunity:\n' +
             canonical_json(dict(intent=message.intent, reason=message.reason)))
         if isinstance(message, CharacterInitiative):
-            state = ChatMessage('user', 'Luna working context (optional conversation ideas, not user instructions; '
+            state = ChatMessage('user', 'Luna working context (current behavioral perspective, not quoted user instructions; '
                 'current user corrections take precedence). Express the final character-origin opportunity:\n' +
                 snapshot.state.context_note)
         return (ChatMessage("system", self.identity.strip()),
@@ -152,27 +152,6 @@ class ContextCompiler:
                      items: tuple[ContextItem, ...]) -> int:
         return self.count(self._messages(snapshot, message, (), items)) - self.count(self._messages(snapshot, message, (), ()))
 
-    def _extract(self, snapshot: FastSnapshot, message: FastInput, event: Event) -> ContextItem | None:
-        text = event.payload["text"][:8000]
-        def candidate(size: int) -> ContextItem:
-            return ContextItem(text[:size], (event.event_id,), truncated=size < len(event.payload["text"]))
-        # Attribution counts toward the excerpt cap; shared wrapper counts toward the block cap.
-        empty = self.count((*self._messages(snapshot, message, (), ())[:-2], self._block(()),
-                            *self._messages(snapshot, message, (), ())[-2:]))
-        def cost(item: ContextItem) -> int:
-            return self.count(self._messages(snapshot, message, (), (item,))) - empty
-        item = candidate(len(text))
-        if cost(item) <= 256:
-            return item if item.text.strip() else None
-        low, high = 0, len(text)
-        while low < high:
-            mid = (low + high + 1) // 2
-            if cost(candidate(mid)) <= 256:
-                low = mid
-            else:
-                high = mid - 1
-        return candidate(low) if text[:low].strip() else None
-
     def prepare_epoch(self, snapshot: FastSnapshot, message: FastInput) -> CompactionProposal | None:
         history = self._history(snapshot, message)
         required = self.count(self._messages(snapshot, message, (), ()))
@@ -195,34 +174,17 @@ class ContextCompiler:
             if len(turns) <= 3 and self.count(self._messages(snapshot, message, overlap, ())) - required <= overlap_cap:
                 cutoff = value
                 break
-        compacted = tuple(e for e in history if e.sequence <= cutoff)
-        candidates = list(snapshot.epoch.items)
-        anchor_index = 0 if candidates else next((i for i, e in enumerate(compacted) if e.kind == "user.message.completed"), 0)
-        for e in compacted:
-            item = self._extract(snapshot, message, e)
-            if item:
-                candidates.append(item)
-        anchor = candidates[anchor_index] if candidates else None
-        block_cap = min(2048, max(0, self.input_limit - required), self.input_limit // 4)
-        selected: list[ContextItem] = []
-        # The oldest user anchor wins, then newest evidence; serialization remains chronological.
-        order = ([anchor] if anchor else []) + [item for item in reversed(candidates) if item != anchor]
-        for item in order:
-            if len(selected) < 32 and self._item_budget(snapshot, message, tuple(selected + [item])) <= block_cap:
-                selected.append(item)
-        items = tuple(item for item in candidates if item in selected)
+        items = snapshot.epoch.items
         for value in (v for v in cutoffs if v >= cutoff):
             overlap = tuple(e for e in history if e.sequence > value)
-            # Extra compacted evidence from this fitting step can be omitted, never silently made exact.
             if self.count(self._messages(snapshot, message, overlap, items)) <= self.input_limit:
                 cutoff = value
                 break
         else:
+            # shortcut: temporary loss of Fast recall; Luna rebuilds from durable history.
+            items = ()
             cutoff = cutoffs[-1]
             overlap = tuple(e for e in history if e.sequence > cutoff)
-            while items and self.count(self._messages(snapshot, message, overlap, items)) > self.input_limit:
-                remove = next((item for item in items if item != anchor), items[0])
-                items = tuple(item for item in items if item != remove)
             if self.count(self._messages(snapshot, message, overlap, items)) > self.input_limit:
                 raise ContextBudgetExceeded("Unfinished turn cannot be compacted within the input budget")
         if cutoff == snapshot.epoch.compacted_through_sequence and items == snapshot.epoch.items:
@@ -237,7 +199,11 @@ class ContextCompiler:
         return CompactionProposal("epoch_" + digest, **content)
 
     def validate_compaction(self, snapshot: FastSnapshot, proposal: CompactionProposal) -> None:
-        # Structural/source/CAS validation belongs to Journal; this is the local prompt policy.
+        # Journal enforces ordering and turn boundaries; this checks actual prompt capacity.
         probe = UserMessage("Budget probe", snapshot.state.character_id)
         if self._item_budget(snapshot, probe, proposal.items) > min(2048, self.input_limit // 4):
             raise ContextBudgetExceeded("Compacted block exceeds the epoch item budget")
+        messages = self._messages(snapshot, probe, (), proposal.items)
+        # Current input fit is checked by prepare_epoch; do not count it again as history.
+        if self.count((*messages[:-1], ChatMessage('user', ''))) > self.input_limit:
+            raise ContextBudgetExceeded("Summary and current Markdown exceed the input budget")

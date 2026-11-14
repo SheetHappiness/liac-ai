@@ -10,7 +10,6 @@ from datetime import datetime, timedelta
 from typing import Literal
 
 from vtuber.contracts.events import Event, OutputKind, RuntimeOutput, UserMessage, FastInput, CharacterInitiative, utc_now
-from vtuber.contracts.deep import DeepRequest, DeepResult, DeepDecision, validate_initiative_timing
 from vtuber.contracts.protocols import ContextPolicy, DeepMind, FastMind, OutputSink
 from vtuber.contracts.context import CompactionProposal, CompactionResult, ContextBudgetExceeded
 from vtuber.contracts.state import FastSnapshot
@@ -34,12 +33,8 @@ class Runtime:
                  fast_diagnostics: dict[str, object] | None = None,
                  deep_diagnostics: dict[str, object] | None = None,
                  context_policy: ContextPolicy | None = None, trace: TraceSink | None = None,
-                 context_path: Path | None = None, initiative_enabled: bool = False,
-                 initiative_delay_seconds: float = 5.0, initiative_ttl_seconds: float = 120.0,
-                 initiative_cooldown_seconds: float = 60.0) -> None:
-        validate_initiative_timing(initiative_delay_seconds, initiative_ttl_seconds, initiative_cooldown_seconds)
+                 context_path: Path | None = None, initiative_enabled: bool = False) -> None:
         self.initiative_enabled = initiative_enabled
-        self.initiative_cooldown_seconds = initiative_cooldown_seconds
         self._initiative_task: asyncio.Task[None] | None = None
         self._initiative_id: str | None = None
         self.character_id = character_id
@@ -55,9 +50,7 @@ class Runtime:
         self.deep_diagnostics = deep_diagnostics if deep_diagnostics is not None else {}
         self._deep_worker = DeepWorker(character_id, journal, deep, self._emit,
             timeout=deep_timeout, context_policy=context_policy, diagnostics=self.deep_diagnostics, trace=trace,
-            context_path=context_path, on_decision=self._on_deep_decision,
-            initiative_enabled=initiative_enabled, initiative_delay_seconds=initiative_delay_seconds,
-            initiative_ttl_seconds=initiative_ttl_seconds)
+            context_path=context_path, on_applied=self._on_deep_applied, initiative_enabled=initiative_enabled)
         self._input_lock = asyncio.Lock()
         self._fast_task: asyncio.Task[None] | None = None
         self._current: tuple[FastInput, FastSnapshot] | None = None
@@ -106,7 +99,6 @@ class Runtime:
                 return self._fast_task if self._current and self._current[0].event_id == message.event_id else None
             self._deep_worker.notify()
             await self._cancel_fast("superseded")
-            self._withdraw_initiative("new_user_input")
             return self._start_fast(message)
 
     def _start_fast(self, message: FastInput, *, initiative_clock: tuple[datetime, float] | None = None) -> asyncio.Task[None] | None:
@@ -137,7 +129,6 @@ class Runtime:
                 self.journal.close_initiative(message.proposal_id, 'preparation_failed')
                 return None
             claimed = self.journal.claim_initiative(message.proposal_id, snapshot,
-                cooldown_seconds=self.initiative_cooldown_seconds,
                 checked_at=(initiative_clock[0]+timedelta(seconds=perf_counter()-initiative_clock[1])).isoformat()
                     if initiative_clock is not None else None)
             if claimed is None:
@@ -188,6 +179,7 @@ class Runtime:
             retained = {s for item in proposal.items for s in item.source_event_ids}
             omitted = tuple(s for s in covered if s not in retained)
             self.fast_diagnostics["last_compaction"] = {"epoch_version": result.epoch_version,
+                "mode": "budget_only", "recovery_pending": True,
                 "covered_source_count": len(covered), "retained_source_count": len(retained),
                 "omitted_source_count": len(omitted), "omitted_source_ids": omitted[:32]}
         return result
@@ -256,7 +248,7 @@ class Runtime:
             task.cancel()
         return task
 
-    def _on_deep_decision(self, request: DeepRequest, result: DeepResult, decision: DeepDecision) -> None:
+    def _on_deep_applied(self) -> None:
         pending = self.journal.pending_initiative(self.character_id)
         proposal_id = pending.event_id if pending else None
         if proposal_id == self._initiative_id:
@@ -274,30 +266,23 @@ class Runtime:
         p = proposal.payload
         now = datetime.fromisoformat(utc_now())
         armed = perf_counter()
-        remaining = (datetime.fromisoformat(p['expires_at']) - now).total_seconds()
         delay = max(0, (datetime.fromisoformat(p['ready_at']) - now).total_seconds())
-        last = self.journal.last_initiative_attempt(self.character_id)
-        if last:
-            delay = max(delay, self.initiative_cooldown_seconds -
-                        (now - datetime.fromisoformat(last.occurred_at)).total_seconds())
-        if remaining <= delay:
-            self.journal.close_initiative(proposal_id, 'expired_before_ready')
-            return
         await initiative_delay(delay)
-        active = self._fast_task
-        if active is not None and not active.done():
-            await asyncio.wait((active,), timeout=max(0, remaining-delay))
-        # Let already queued real inputs acquire the lock first.
-        await asyncio.sleep(0)
-        async with self._input_lock:
-            if self._stopping or not self.initiative_enabled:
+        while not self._stopping:
+            active = self._fast_task
+            if active is not None and not active.done():
+                # Waiting-task cancellation must never propagate to a user stream.
+                await asyncio.wait((active,))
+            await asyncio.sleep(0)
+            async with self._input_lock:
+                if self._stopping or not self.initiative_enabled:
+                    return
+                if self._fast_task is not None and not self._fast_task.done():
+                    continue
+                self._start_fast(CharacterInitiative(p['intent'], p.get('reason', ''), self.character_id,
+                    'initiative_input_'+proposal_id, 'initiative_turn_'+proposal_id, utc_now(), proposal_id),
+                    initiative_clock=(now, armed))
                 return
-            if self._fast_task is not None and not self._fast_task.done():
-                self.journal.close_initiative(proposal_id, 'expired_while_speaking')
-                return
-            self._start_fast(CharacterInitiative(p['intent'], p['reason'], self.character_id,
-                'initiative_input_'+proposal_id, 'initiative_turn_'+proposal_id, utc_now(), proposal_id),
-                initiative_clock=(now, armed))
 
     async def _cancel_fast(self, reason: str) -> None:
         if self._fast_task is not None:

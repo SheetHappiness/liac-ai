@@ -121,10 +121,10 @@ class RuntimeTraceTests(unittest.IsolatedAsyncioTestCase):
             rows = read_trace(trace.path)
             self.assertTrue(any(r['kind'] == 'fast.started' and r['request_id'] == message.turn_id for r in rows))
             self.assertTrue(any(r['kind'] == 'fast.finished' and r['request_id'] == message.turn_id for r in rows))
-            decisions = [r for r in rows if r['kind'] == 'deep.decision']
+            decisions = [r for r in rows if r['kind'] == 'deep.applied']
             self.assertTrue(decisions)
             data = json.loads((trace.path / decisions[-1]['file']).read_text(encoding='utf-8'))['data']
-            self.assertTrue(data['decision']['acknowledged'])
+            self.assertEqual(data['application']['context'], 'changed')
             self.assertEqual(data['after']['state']['context_note'], 'Last user message: green hat')
 
     async def test_broken_trace_does_not_break_fast_or_deep(self):

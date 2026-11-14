@@ -16,7 +16,7 @@ class RuntimeLifecycleTests(unittest.IsolatedAsyncioTestCase):
     async def test_clock_correction_does_not_strand_initiative(self):
         from datetime import datetime, timedelta
         from unittest.mock import patch
-        from vtuber.contracts.deep import DeepResult, InitiativeProposal
+        from vtuber.contracts.deep import DeepResult, InitiativeSpeak
         from vtuber.contracts.events import utc_now
         wall, monotonic = [datetime.fromisoformat(utc_now())], [100.0]
         async def elapsed(seconds):
@@ -26,18 +26,18 @@ class RuntimeLifecycleTests(unittest.IsolatedAsyncioTestCase):
         journal = Journal(':memory:')
         try:
             async with Runtime('primary', journal, FakeFast(0), FakeDeep(100), lambda _: None,
-                initiative_enabled=True, initiative_cooldown_seconds=0) as runtime:
+                initiative_enabled=True) as runtime:
                 user = UserMessage('unfinished hat')
                 await (await runtime.submit(user))
                 request = journal.deep_request('primary', request_id='clock', initiative_allowed=True)
-                result = DeepResult(2, request.request_id, initiative=InitiativeProposal('hat', 'unfinished', (user.event_id,)))
+                result = DeepResult(3, request.request_id, initiative=InitiativeSpeak('hat', 1))
                 decision = journal.apply_deep(request, result)
-                wall[0] = datetime.fromisoformat(request.captured_at)
+                wall[0] = datetime.fromisoformat(journal.pending_initiative('primary').occurred_at)
                 with patch('vtuber.runtime.orchestrator.utc_now', lambda: wall[0].isoformat()), \
                      patch('vtuber.runtime.journal.utc_now', lambda: wall[0].isoformat()), \
                      patch('vtuber.runtime.orchestrator.perf_counter', lambda: monotonic[0]), \
                      patch('vtuber.runtime.orchestrator.initiative_delay', elapsed):
-                    runtime._on_deep_decision(request, result, decision)
+                    runtime._on_deep_applied()
                     await runtime._initiative_task
                     await runtime._fast_task
                     self.assertIsNone(journal.pending_initiative('primary'))
@@ -47,7 +47,7 @@ class RuntimeLifecycleTests(unittest.IsolatedAsyncioTestCase):
             journal.close()
 
     async def test_user_wins_initiative_race(self):
-        from vtuber.contracts.deep import DeepResult, InitiativeProposal
+        from vtuber.contracts.deep import DeepResult, InitiativeSpeak
         from vtuber.contracts.events import CharacterInitiative
         from unittest.mock import patch
         entered, release, ready = asyncio.Event(), asyncio.Event(), asyncio.Event()
@@ -62,9 +62,7 @@ class RuntimeLifecycleTests(unittest.IsolatedAsyncioTestCase):
                 yield 'done'
         class Deep:
             async def propose(self, request):
-                return DeepResult(2, request.request_id, initiative=InitiativeProposal(
-                    'A hat joke', 'Unfinished design', (next(e.event_id for e in reversed(request.events)
-                    if e.kind == 'user.message.completed'),))) if request.initiative_allowed else DeepResult(2, request.request_id)
+                return DeepResult(3, request.request_id, initiative=InitiativeSpeak('A hat joke')) if request.initiative_allowed else DeepResult(3, request.request_id)
         async def wait_ready(seconds):
             ready.set()
             await release.wait()
@@ -76,8 +74,7 @@ class RuntimeLifecycleTests(unittest.IsolatedAsyncioTestCase):
             journal = Journal(Path(folder)/'race.db')
             try:
                 async with Runtime('primary', journal, Fast(), Deep(), outputs.append,
-                    initiative_enabled=True, initiative_delay_seconds=0, initiative_ttl_seconds=30,
-                    initiative_cooldown_seconds=0) as runtime:
+                    initiative_enabled=True) as runtime:
                     with patch('vtuber.runtime.orchestrator.initiative_delay', wait_ready):
                         first = UserMessage('unfinished hat')
                         await (await runtime.submit(first))
@@ -85,13 +82,13 @@ class RuntimeLifecycleTests(unittest.IsolatedAsyncioTestCase):
                         pending = journal.pending_initiative('primary')
                         # A none result never rearms or withdraws the owned opportunity.
                         task = runtime._initiative_task
-                        runtime._on_deep_decision(None, None, None)
+                        runtime._on_deep_applied()
                         self.assertIs(runtime._initiative_task, task)
                         self.assertEqual(journal.pending_initiative('primary'), pending)
                         queued = asyncio.create_task(runtime.submit(UserMessage('No jokes, new topic')))
                         release.set()
                         await (await queued)
-                    self.assertFalse(any(isinstance(m, CharacterInitiative) for m in calls))
+                    self.assertIsInstance(calls[1], UserMessage)
                     release.clear()
                     await until(entered.is_set)
                     active = calls[-1]
@@ -106,7 +103,7 @@ class RuntimeLifecycleTests(unittest.IsolatedAsyncioTestCase):
                 journal.close()
 
     async def test_initiative_close_and_recovery(self):
-        from vtuber.contracts.deep import DeepResult, InitiativeProposal
+        from vtuber.contracts.deep import DeepResult, InitiativeSpeak
         from vtuber.contracts.events import Event
         with tempfile.TemporaryDirectory() as folder:
             path = Path(folder)/'recovery.db'
@@ -116,15 +113,14 @@ class RuntimeLifecycleTests(unittest.IsolatedAsyncioTestCase):
                 journal.append(user.as_event())
                 journal.append(Event.create('primary', 'character.reply.completed', {'text': 'okay'}, turn_id=user.turn_id))
                 request = journal.deep_request('primary', request_id='pending-crash', initiative_allowed=True)
-                journal.apply_deep(request, DeepResult(2, request.request_id, initiative=InitiativeProposal(
-                    'hat', 'unfinished', (user.event_id,), 0, 120)))
+                journal.apply_deep(request, DeepResult(3, request.request_id, initiative=InitiativeSpeak('hat')))
                 pending = journal.pending_initiative('primary')
                 # Crash after atomic claim, before the task runs its first instruction.
                 message = journal.claim_initiative(pending.event_id, journal.fast_snapshot('primary'))
                 journal.close()
                 journal = Journal(path)
                 async with Runtime('primary', journal, FakeFast(0), FakeDeep(100), lambda _: None,
-                    initiative_enabled=True, initiative_delay_seconds=0) as runtime:
+                    initiative_enabled=True) as runtime:
                     self.assertEqual(journal.get('reply_terminal_'+message.event_id).payload['reason'], 'process_restarted')
                     self.assertIsNone(journal.pending_initiative('primary'))
                     self.assertEqual(journal.unfinished_inputs('primary'), ())

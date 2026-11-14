@@ -241,7 +241,7 @@ class RunReader:
                 if turn := event.get('turn_id'):
                     self._turn_requests.setdefault(turn, set()).add(rid)
             self._context(row, request.get('snapshot'))
-        elif kind == 'deep.decision':
+        elif kind in ('deep.applied', 'deep.decision'):
             self._context(row, data.get('after'))
         elif kind in ('runtime.lifecycle', 'runtime.context'):
             self._context(row, data.get('snapshot'))

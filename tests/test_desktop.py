@@ -169,7 +169,7 @@ class WindowTests(unittest.TestCase):
                 window.composer.setPlainText('green hat')
                 window.send_message()
                 until(lambda: 'You said: green hat' in window.chat.toPlainText())
-                until(lambda: any(r['row']['kind'] == 'deep.decision' for r in window.records))
+                until(lambda: any(r['row']['kind'] == 'deep.applied' for r in window.records))
                 index = next(i for i, r in enumerate(window.records) if r['row']['kind'] == 'deep.started')
                 window.requests.setCurrentRow(index)
                 until(lambda: 'green hat' in window.context.toPlainText())

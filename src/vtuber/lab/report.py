@@ -39,7 +39,7 @@ def summarize_run(reader) -> dict:
         usage[actor] = dict(completed_calls=len(calls),totals=fields or None)
     events = {}
     lag = []
-    decisions = []
+    decisions, applications = [], []
     for record in records:
         data = record['data']
         if record['kind']=='runtime.journal' or record['kind'].startswith('initiative.'):
@@ -47,6 +47,8 @@ def summarize_run(reader) -> dict:
             events[event['event_id']] = event
         elif record['kind']=='runtime.status':
             lag.append(data['journal_sequence']-data['deep_cursor'])
+        elif record['kind']=='deep.applied':
+            applications.append(data.get('application',{}))
         elif record['kind']=='deep.decision':
             decisions.append(data.get('decision',{}))
     initiative = dict(proposed=0,claimed=0,spoken=0,cancelled=0,expired=0)
@@ -84,8 +86,10 @@ def summarize_run(reader) -> dict:
         usage=usage,deep_calls=len({r['request_id'] for r in records if r['kind']=='deep.started'}),
         deep_lag=dict(max=max(lag) if lag else None,final=lag[-1] if lag else None,unit='journal sequences'),
         errors=sum(r['kind'] in ('deep.failed',) for r in records)+sum(d.get('status')=='failed' for d in final.values()),
-        failed_proposals=sum(not d.get('acknowledged',False) for d in decisions),
-        no_op_proposals=sum(any(isinstance(v,dict) and v.get('reason')=='no_change' for v in d.values()) for d in decisions),
+        context_updates=dict(changed=sum(a.get('context')=='changed' for a in applications),
+            unchanged=sum(a.get('context')=='unchanged' for a in applications)),
+        legacy_failed_proposals=sum(not d.get('acknowledged',False) for d in decisions),
+        legacy_no_op_proposals=sum(any(isinstance(v,dict) and v.get('reason')=='no_change' for v in d.values()) for d in decisions),
         compactions=sum(e['kind']=='context.epoch.applied' and
             json.loads(e['payload_json']).get('reason')!='no_change' for e in events.values()),
         cancelled_replies=sum(d.get('status')=='cancelled' for d in final.values()), initiative=initiative,

@@ -235,7 +235,7 @@ async def markdown_context(evidence):
         config = evidence.config(f'markdown-{budget}', working_context_tokens=budget)
         decisions = []
         def trace(kind, request_id, data):
-            if kind == 'deep.decision':
+            if kind == 'deep.applied':
                 decisions.append(data)
         async with open_runtime(config, evidence.output, trace=trace) as runtime:
             async def settled(terminal):
@@ -306,7 +306,6 @@ async def markdown_context(evidence):
 
 
 async def initiative(evidence):
-    from vtuber.contracts.deep import InitiativeProposal
     from vtuber.runtime.context_file import context_file_path
 
     class Observed:
@@ -411,14 +410,13 @@ async def initiative(evidence):
         await settle(runtime, sequence)
         evidence.save('initiative_stale', scenario='C/E/G', injected_delivery_hold=True,
             starts=len(events(runtime, 'character.initiative.started')),
-            decisions=[e.payload['decision'] for e in events(runtime, 'deep.batch.completed')],
+            decisions=[e.payload['application'] for e in events(runtime, 'deep.batch.completed')],
             document=runtime.journal.snapshot('primary').context_note, deep_calls=observed.calls)
 
     # A controlled stream hold tests cancellation using actual provider chunks.
     from contextlib import aclosing
     from vtuber.contracts.events import CharacterInitiative
-    config = evidence.config('initiative-stream-race', initiative_enabled=True,
-        initiative_delay_seconds=1, initiative_cooldown_seconds=2)
+    config = evidence.config('initiative-stream-race', initiative_enabled=True)
     async with open_runtime(config, evidence.output) as runtime:
         observed = Observed(runtime.deep)
         runtime._deep_worker.mind = observed

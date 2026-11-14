@@ -22,8 +22,8 @@ class ContextTests(unittest.TestCase):
         self.assertEqual(before.messages[:-2], after.messages[:-2])
         self.assertNotEqual(before.messages[-2].content, after.messages[-2].content)
         self.assertEqual(before.messages[-1].content, current.text)
-        prefix_before = render_nemotron(before.messages).split("Luna working context (optional", 1)[0]
-        prefix_after = render_nemotron(after.messages).split("Luna working context (optional", 1)[0]
+        prefix_before = render_nemotron(before.messages).split("Luna working context (current", 1)[0]
+        prefix_after = render_nemotron(after.messages).split("Luna working context (current", 1)[0]
         self.assertEqual(prefix_before, prefix_after)
         self.assertIn("history reply", prefix_before)
         self.assertIn("old note", before.messages[-2].content)
@@ -93,30 +93,27 @@ class ContextTests(unittest.TestCase):
         self.assertEqual(compiled.messages[-1].content, 'two plus two')
         self.assertEqual(compiled.messages[1].role, 'user')
 
-    def test_transition_preserves_anchor_recent_turns_note_and_sources(self):
+    def test_transition_preserves_whole_epoch_recent_turns_and_note(self):
         compiler = ContextCompiler('Identity', 2400, 100, working_context_tokens=500)
         snapshot = replace(self.history(12), state=CharacterState('primary', 1, 'required active note' + 'x'*480))
         compiler.validate_working_context(snapshot.state.context_note)
         message = UserMessage('current')
         proposal = compiler.prepare_epoch(snapshot, message)
         self.assertIsNotNone(proposal)
-        self.assertIn('ANCHOR penguin Mandarin blue hat.', proposal.items[0].text)
-        self.assertTrue(any(item.truncated for item in proposal.items))
-        self.assertTrue(all(e.sequence <= proposal.compacted_through_sequence
-            for item in proposal.items for e in snapshot.recent_dialogue if e.event_id in item.source_event_ids))
+        self.assertEqual(proposal.items, snapshot.epoch.items)
         next_snapshot = replace(snapshot, epoch=ContextEpoch(1, proposal.compacted_through_sequence, proposal.items))
         compiled = compiler.compile(next_snapshot, message)
         self.assertIn('required active note', compiled.messages[-2].content)
         self.assertLessEqual(compiled.estimated_input_tokens + 132, 2400)
         self.assertEqual(compiler.prepare_epoch(next_snapshot, message), None)
         later = self.history(24)
-        # Append truly later records, retaining the old anchor epoch.
+        # Append later records without inventing a semantic memory projection.
         later_events = tuple(replace(e, sequence=e.sequence + snapshot.through_sequence) for e in later.recent_dialogue)
         next_snapshot = replace(next_snapshot, through_sequence=72,
             recent_dialogue=next_snapshot.recent_dialogue + later_events,
             terminal_turns=next_snapshot.terminal_turns + tuple((t, s + 24) for t, s in later.terminal_turns))
         second = compiler.prepare_epoch(next_snapshot, message)
-        self.assertIn('ANCHOR penguin Mandarin blue hat.', second.items[0].text)
+        self.assertEqual(second.items, proposal.items)
         self.assertGreater(second.compacted_through_sequence, proposal.compacted_through_sequence)
 
     def test_exact_budget_boundary_and_noop_prevention(self):
@@ -138,6 +135,13 @@ class ContextTests(unittest.TestCase):
         compiled = compiler.compile(replace(snapshot, epoch=ContextEpoch(1, 2, p.items)), UserMessage('next'))
         self.assertEqual(compiled.history_included, 0)
         self.assertLessEqual(compiled.estimated_input_tokens, 868)
+        current = UserMessage('x' * (868 - sum(len(m.content) for m in compiler._messages(snapshot, UserMessage('x'), (), ())) + 1))
+        accepted = replace(snapshot, recent_dialogue=snapshot.recent_dialogue + (replace(current.as_event(), sequence=3),), through_sequence=3)
+        local = compiler.prepare_epoch(accepted, current)
+        self.assertIsNotNone(local)
+        compiler.validate_compaction(accepted, local)
+        compiler.compile(replace(accepted, epoch=ContextEpoch(1, local.compacted_through_sequence, local.items)), current)
+
 
     def test_superseded_interleaved_turn_cannot_cut_through_new_input(self):
         first, current = UserMessage('old ' * 100), UserMessage('new')

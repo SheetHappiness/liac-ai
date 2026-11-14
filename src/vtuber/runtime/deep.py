@@ -1,12 +1,12 @@
 """One serialized, recoverable observer. No provider operation belongs to Fast."""
 import asyncio
-from dataclasses import asdict
+from dataclasses import asdict, replace
 from time import perf_counter
 from pathlib import Path
 from typing import Callable
 
-from vtuber.contracts.context import ContextBudgetExceeded
-from vtuber.contracts.deep import DeepUnavailable, DeepRequest, DeepResult, DeepDecision
+from vtuber.contracts.context import CompactionProposal, ContextItem
+from vtuber.contracts.deep import DeepUnavailable, DeepRequest, DeepResult
 from vtuber.contracts.events import RuntimeOutput, UserMessage, new_id
 from vtuber.contracts.protocols import ContextPolicy, DeepMind, OutputSink
 from vtuber.runtime.journal import Journal
@@ -22,22 +22,20 @@ class DeepWorker:
     def __init__(self, character_id: str, journal: Journal, mind: DeepMind, output: OutputSink,
                  *, timeout: float, context_policy: ContextPolicy | None, diagnostics: dict[str, object],
                  trace: TraceSink | None = None, context_path: Path | None = None,
-                 on_decision: Callable[[DeepRequest, DeepResult, DeepDecision], None] | None = None,
-                 initiative_enabled: bool = False, initiative_delay_seconds: float = 5.0,
-                 initiative_ttl_seconds: float = 120.0) -> None:
+                 on_applied: Callable[[], None] | None = None,
+                 initiative_enabled: bool = False) -> None:
         self.character_id, self.journal, self.mind, self.output = character_id, journal, mind, output
         self.timeout, self.context_policy, self.diagnostics = timeout, context_policy, diagnostics
         self.error: str | None = None
         self.trace = trace
         self.context_path = context_path
-        self.on_decision = on_decision
+        self.on_applied = on_applied
         self.initiative_enabled = initiative_enabled
-        self.initiative_delay_seconds = initiative_delay_seconds
-        self.initiative_ttl_seconds = initiative_ttl_seconds
         self._wake = asyncio.Event()
         self._retry = asyncio.Event()
         self._task = None
         self._compact = False
+        self._recover = True
         self._attempted = None
         self._stopping = False
 
@@ -53,6 +51,7 @@ class DeepWorker:
         self._wake.set()
 
     def retry(self) -> None:
+        self._recover = True
         self._attempted = None
         self._retry.set()
         self.notify()
@@ -115,16 +114,15 @@ class DeepWorker:
             failures = 0
             while not self._stopping:
                 request = None
+                recover = self._recover
                 revision = self.journal.snapshot(self.character_id).revision
                 try:
                     pressure = self._compact or self._pressure()
-                    request = self.journal.deep_request(self.character_id, request_id=new_id('deep'), compact=pressure,
+                    request = self.journal.deep_request(self.character_id, request_id=new_id('deep'), compact=pressure, recover=recover,
                         working_context_tokens=self.context_policy.working_context_tokens if self.context_policy else 2048,
-                        initiative_allowed=self.initiative_enabled and not self.journal.initiative_attempted(
-                            self.character_id, self.journal.latest_user_sequence(self.character_id)),
-                        initiative_delay_seconds=self.initiative_delay_seconds,
-                        initiative_ttl_seconds=self.initiative_ttl_seconds)
+                        initiative_allowed=self.initiative_enabled)
                     self._compact = False
+                    self._recover = False
                     if request is None:
                         break
                     key = (request.snapshot.epoch.version, request.snapshot.state.revision,
@@ -144,43 +142,45 @@ class DeepWorker:
                     if self._stopping:
                         return
                     self.diagnostics['analysis_ms'] = round((perf_counter()-start)*1000, 3)
-                    budget_error = None
-                    if result.compaction and self.context_policy:
-                        try:
-                            self.context_policy.validate_compaction(self.journal.fast_snapshot(self.character_id), result.compaction)
-                        except ContextBudgetExceeded:
-                            budget_error = 'context_budget_exceeded'
-                    context_error = None
-                    if result.note and self.context_policy:
-                        try:
-                            self.context_policy.validate_working_context(result.note.note)
-                        except ContextBudgetExceeded:
-                            context_error = 'working_context_budget_exceeded'
+                    if result.note is not None and self.context_policy:
+                        self.context_policy.validate_working_context(result.note)
+                    if result.compaction is not None and self.context_policy:
+                        if request.compaction is None:
+                            raise ValueError('Unrequested compaction')
+                        current = self.journal.fast_snapshot(self.character_id)
+                        if request.compaction.cutoff >= current.epoch.compacted_through_sequence:
+                            if result.note is not None:
+                                current = replace(current, state=replace(current.state, context_note=result.note))
+                            items = (ContextItem(result.compaction, (), 'summary'),) if result.compaction else ()
+                            self.context_policy.validate_compaction(current, CompactionProposal(
+                                request.request_id + ':epoch', self.character_id, current.epoch.version,
+                                current.state.revision, request.snapshot.through_sequence,
+                                request.compaction.cutoff, items))
                     start = perf_counter()
                     before = self.journal.fast_snapshot(self.character_id) if trace_enabled(self.trace) else None
-                    decision = self.journal.apply_deep(request, result, compaction_error=budget_error, context_error=context_error)
+                    application = self.journal.apply_deep(request, result)
                     self.diagnostics.update(commit_ms=round((perf_counter()-start)*1000, 3),
-                        decision=decision.reason, acknowledged=decision.acknowledged)
+                        context=application['context'], acknowledged=True,
+                        recovery_pending=bool(self.journal.epoch_recovery(self.character_id).get('recovery_pending')))
+                    self.diagnostics['degraded'] = self.diagnostics['recovery_pending']
                     if trace_enabled(self.trace):
-                        emit_trace(self.trace, 'deep.decision', request.request_id,
-                                   result=asdict(result), decision=asdict(decision), before=asdict(before),
+                        emit_trace(self.trace, 'deep.applied', request.request_id,
+                                   result=asdict(result), application=application, before=asdict(before),
                                    after=asdict(self.journal.fast_snapshot(self.character_id)), metrics=self.diagnostics)
-                    if not decision.acknowledged:
-                        raise ValueError(decision.reason)
-                    self.diagnostics['initiative_reason'] = decision.initiative_reason
-                    if self.on_decision:
-                        self.on_decision(request, result, decision)
-                    if decision.note and decision.note.reason == 'applied':
+                    if self.on_applied:
+                        self.on_applied()
+                    if application['context'] == 'changed':
                         await self._refresh_context()
                     current = self.journal.snapshot(self.character_id)
                     self._attempted = (self.journal.context_epoch(self.character_id).version,
                         current.revision, request.compaction.cutoff if request.compaction else None)
                     self.error = None
-                    self.diagnostics.update(error=None, retry_count=0, degraded=False)
+                    self.diagnostics.update(error=None, retry_count=0,
+                        degraded=bool(self.journal.epoch_recovery(self.character_id).get('recovery_pending')))
                     failures = 0
                     revision = self.journal.snapshot(self.character_id).revision
                     self.output(RuntimeOutput('deep.completed', self.character_id, revision,
-                        text=f'{decision.reason}; through #{request.snapshot.through_sequence}'))
+                        text=f"context {application['context']}; through #{request.snapshot.through_sequence}"))
                 except asyncio.CancelledError:
                     if request is not None:
                         emit_trace(self.trace, 'deep.cancelled', request.request_id, reason='shutdown')
@@ -199,6 +199,7 @@ class DeepWorker:
                         # Notifications accumulated during this failed cycle do not bypass its cap.
                         self._wake.clear()
                         break
+                    self._recover |= recover
                     emit_trace(self.trace, 'deep.phase', request.request_id if request else self.character_id,
                                phase='retry', attempt=failures+1, wait_seconds=2**failures, reason=self.error)
                     failures = 0 if await self._backoff(2**failures) else failures + 1

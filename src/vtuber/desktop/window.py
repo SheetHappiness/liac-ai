@@ -396,7 +396,7 @@ class MainWindow(QMainWindow):
     def _filter(self):
         text = self.search.text().lower()
         prefix = {'Fast': ('fast.',), 'Luna': ('deep.', 'omp.'), 'Runtime': ('runtime.',),
-                  'Context':('runtime.context','runtime.epoch','deep.decision'),
+                  'Context':('runtime.context','runtime.epoch','deep.applied','deep.decision'),
                   'Initiative':('initiative.',), 'Simulator':('simulator.',)}.get(self.category.currentText())
         for i, record in enumerate(self.records):
             row = record['row']
@@ -457,11 +457,12 @@ class MainWindow(QMainWindow):
         finish = by_kind.get('fast.finished')
         response = by_kind.get('deep.response')
         terminal = by_kind.get('deep.failed') or by_kind.get('deep.cancelled')
-        decision_data = by_kind.get('deep.decision', {}).get('decision')
+        applied = by_kind.get('deep.applied') or by_kind.get('deep.decision', {})
+        application = applied.get('application', applied.get('decision'))
         luna_output = {'response': response, 'terminal': terminal,
-                  'proposal':by_kind.get('deep.decision',{}).get('result'),
-                  'decision': decision_data}
-        has_luna = response or terminal or decision_data
+                  'result':applied.get('result'),
+                  'application': application}
+        has_luna = response or terminal or application
         if finish and has_luna:
             output = {'fast': finish, 'luna': luna_output}
         elif finish or has_luna:
@@ -479,16 +480,16 @@ class MainWindow(QMainWindow):
         else:
             self._set(self.context, by_kind.get('deep.prompt') or deep or
                       {'notice': 'Exact prompt was not captured (fake backend or old trace).', **first})
-        decision = by_kind.get('deep.decision')
+        decision = by_kind.get('deep.applied') or by_kind.get('deep.decision')
         if decision:
             before, after = decision['before'], decision['after']
             old = before['state']['context_note'].splitlines()
             new = after['state']['context_note'].splitlines()
             diff = '\n'.join(difflib.unified_diff(old, new, fromfile='Before', tofile='After', lineterm=''))
-            self._set(self.changes, pretty(decision['decision']) + '\n\n' + (diff or 'Markdown did not change.')+
+            self._set(self.changes, pretty(decision.get('application', decision.get('decision'))) + '\n\n' + (diff or 'Markdown did not change.')+
                       '\n\nEpoch before\n'+pretty(before['epoch'])+'\n\nEpoch after\n'+pretty(after['epoch']))
         else:
-            self._set(self.changes, by_kind.get('runtime.epoch', 'No context change decision was recorded.'))
+            self._set(self.changes, by_kind.get('runtime.epoch', 'No context application was captured.'))
         self._set(self.metrics, {'fast': (finish or {}).get('metrics'),
                   'context': (fast_context or {}).get('metadata'), 'omp': by_kind.get('omp.completed'),
                   'deep': (decision or {}).get('metrics'),
