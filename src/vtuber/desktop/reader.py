@@ -1,5 +1,4 @@
 """Disk reads off the GUI thread, with generation IDs to discard stale selections."""
-import json
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
@@ -46,8 +45,8 @@ class TraceReader(QObject):
 
 
 def details(records):
-    return [json.loads((Path(record['path']) / record['row']['file']).read_text(encoding='utf-8'))
-            for record in records]
+    from vtuber.lab.archive import RunReader
+    return [RunReader.load(dict(record['row'], path=record['path'])) for record in records]
 
 
 def history(path):

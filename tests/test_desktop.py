@@ -81,6 +81,60 @@ class BridgeTests(unittest.TestCase):
 
 
 class WindowTests(unittest.TestCase):
+    def test_fast_selection_includes_luna_outside_visible_page(self):
+        from vtuber.desktop.window import MainWindow
+        from vtuber.tracing import TraceRecorder
+        with tempfile.TemporaryDirectory() as folder:
+            trace = TraceRecorder(Path(folder))
+            trace('fast.started', 't', {'message': {'text': 'hello'}})
+            trace('fast.finished', 't', {'text': 'hi', 'status': 'completed'})
+            for i in range(201):
+                trace('simulator.phase', 'simulation', {'phase': str(i)})
+            trace('deep.started', 'd', {'request': {'events': [{'turn_id': 't'}]}})
+            snapshot = {'state': {'context_note': 'remember hello', 'revision': 1}, 'epoch': {'version': 1}}
+            trace('deep.decision', 'd', {'before': snapshot, 'after': snapshot,
+                                       'decision': {'acknowledged': True}})
+            window = MainWindow(root=Path(folder))
+            window.load_history(trace.path)
+            until(lambda: window.run_reader is not None)
+            window._select_turn('t')
+            try:
+                until(lambda: 'deep.decision' in window.metrics.toPlainText())
+                self.assertIn('acknowledged', window.changes.toPlainText())
+            finally:
+                window.close()
+
+    def test_paged_model_and_stale_detail_completion(self):
+        from vtuber.desktop.window import MainWindow
+        window = MainWindow()
+        rows = [dict(turn_id=str(i),role='user',origin='simulated',text=str(i)) for i in range(10000)]
+        window.chat.conversation.reset(rows)
+        self.assertEqual(window.chat.conversation.rowCount(),1000)
+        window.chat.conversation.reset(rows[:200])
+        self.assertEqual(window.chat.conversation.rows[0]['text'],'0')
+        window.reader.token = 9
+        window.raw.setPlainText('current selection')
+        window._loaded(8,{'records':[]},'stale failure')
+        self.assertEqual(window.raw.toPlainText(),'current selection')
+        window.close()
+
+    def test_lab_controls_and_replay_origin(self):
+        from vtuber.desktop.window import MainWindow
+        from vtuber.tracing import TraceRecorder
+        with tempfile.TemporaryDirectory() as folder:
+            trace = TraceRecorder(Path(folder))
+            trace('conversation.input','t',{'text':'hello','origin':'simulated','session':2})
+            trace('fast.started','t',{'message':{'text':'hello','turn_id':'t'}})
+            trace('fast.finished','t',{'text':'hi','status':'completed'})
+            window = MainWindow(root=Path(folder))
+            window.show()
+            self.assertFalse(window.initiative.isChecked())
+            window.load_history(trace.path)
+            until(lambda: 'hello' in window.chat.toPlainText())
+            self.assertIn('Simulated user',window.chat.toPlainText())
+            self.assertIsNone(window.worker)
+            window.close()
+
     def test_luna_response_retains_parsing_failure(self):
         from vtuber.desktop.window import MainWindow
         with tempfile.TemporaryDirectory() as folder:
