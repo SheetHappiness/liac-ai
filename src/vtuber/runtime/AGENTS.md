@@ -1,36 +1,20 @@
 # Runtime
 
-Own event ordering, revision validation, durable Deep acknowledgement and task
-lifecycle. Import contracts and sibling runtime modules, never concrete minds or
-CLI. `journal.py` commits state + proposal audit + cursor in one transaction;
-`state.py` is the pure reducer. No transaction spans an inference await.
-One Runtime owns one database; new input supersedes its previous visible stream.
-Deep failures preserve the cursor. Do not turn audit events into new Deep work.
-Fast diagnostics are observational and bounded to the latest turn; never persist
-token chunks or provider configuration in domain events.
-An optional TraceSink captures immutable request/decision boundaries separately;
-failed capture cannot alter domain state. `cancel_fast()` serializes explicit user
-cancellation with submit/close. Keep before/after snapshots outside inference awaits.
-Schema v2 adds immutable context epochs; additive migration preserves all events,
-notes and cursors. Compaction CASes epoch + note revision and commits decision +
-epoch atomically, without acknowledging Deep. Validate source/range/turn boundaries;
-no cutoff may split an exchange or cover an unfinished turn. Reject stale proposals
-without rebasing. Read state/epoch/watermark/exact history in one short transaction.
+Luna owns cognition; Runtime owns execution. Keep one serialized Deep worker,
+short atomic state/result/cursor transactions and frozen Fast snapshots. No
+transaction spans inference. Technical failures preserve the cursor; audit-only
+and autonomous-only tails cannot create inference loops.
 
-M2 `deep.py` owns one serialized observer, complete-turn batches and bounded retry. `apply_deep` commits all operation decisions plus cursor together; stale dependencies retain input for reconsideration. Audit-only tails never become model work. No-op compaction is coalesced by epoch/revision/cutoff.
+Markdown is applied directly without evidence, revision/epoch approval or
+semantic dependencies. SQLite remains authoritative; context.md is an off-loop
+projection. Startup and changed commits export; close joins owned writes.
 
-Notes and compaction both depend on the captured epoch. Startup cancels every accepted input without a terminal, including inputs persisted before reply.started. Worker stop prevents post-close application even when an adapter swallows cancellation.
+Epochs retain complete-turn boundaries, local budgets and monotonic cutoffs.
+Budget-only fallback is explicitly degraded, preserving canonical history and
+pending Luna recovery even after pressure falls or the process restarts.
 
-M4.2 validates the document token budget before the atomic Deep batch commit.
-Ordinary newer dialogue is not a conflict; revision/epoch CAS still applies.
-The serialized Deep worker writes context.md off-loop after changed commits and
-at startup; SQLite is authoritative. File failure preserves DB/cursor, exposes
-only the error class, and retries on the next change or restart. Close joins writes.
-
-M4.3 persists a single pending initiative in existing events. Atomic claim checks
-anchor, revision/epoch, prepared snapshot, expiry, cooldown and one-attempt guard;
-it consumes the proposal and appends character input plus reply.started together.
-New user input, explicit cancellation, shutdown and restart withdraw pending work.
-Readiness owns one cancellable task and never calls Deep. Autonomous-only tails
-remain unacknowledged for the next ordinary batch (or actual compaction), without
-self-triggered inference. None does not rearm deadlines or cancel a pending task.
+Initiative is one pending intent: none preserves, speak replaces, cancel withdraws.
+Keep delay, consume-once, input locking, user priority and owned-task cancellation.
+No relevance guards, TTL, cooldown or revision expiry. Restart cancels pending work
+and unfinished inputs. Trace failures cannot affect domain work. Keep provider
+clients outside Runtime and credentials/configuration out of domain events.

@@ -1,10 +1,10 @@
-"""Versioned immutable Deep work and deterministic application decisions."""
+"""Versioned immutable Luna work and direct execution results."""
 from dataclasses import dataclass
 import math
 
-from vtuber.contracts.context import CompactionProposal, CompactionResult
+from vtuber.contracts.context import ContextEpoch
 from vtuber.contracts.events import Event
-from vtuber.contracts.state import FastSnapshot, NoteProposal, UpdateResult
+from vtuber.contracts.state import FastSnapshot
 
 
 class DeepUnavailable(RuntimeError):
@@ -17,45 +17,22 @@ class CompactionInput:
     events: tuple[Event, ...]
 
 
-def validate_initiative_timing(delay: float, ttl: float, cooldown: float = 0) -> None:
-    if (any(type(v) not in (int, float) or not math.isfinite(v) for v in (delay, ttl, cooldown))
-            or not 0 <= delay < ttl or cooldown < 0):
-        raise ValueError('Require finite 0 <= initiative delay < TTL and nonnegative cooldown')
-
-
 @dataclass(frozen=True)
-class InitiativeProposal:
+class InitiativeSpeak:
     intent: str
-    reason: str
-    source_event_ids: tuple[str, ...]
-    delay_seconds: float | None = None
-    ttl_seconds: float | None = None
+    delay_seconds: float = 0.0
 
     def __post_init__(self) -> None:
-        if any(not isinstance(v, str) or not v.strip() or len(v) > 1000
-               for v in (self.intent, self.reason)):
+        if not isinstance(self.intent, str) or not self.intent.strip() or len(self.intent) > 1000:
             raise ValueError('Invalid initiative text')
-        sources = self.source_event_ids
-        if (not isinstance(sources, tuple) or not 1 <= len(sources) <= 32
-                or any(not isinstance(s, str) or not s.strip() for s in sources)
-                or len(set(sources)) != len(sources)):
-            raise ValueError('Invalid initiative sources')
-        delay, ttl = self.delay_seconds, self.ttl_seconds
-        if any(v is not None and (type(v) not in (int, float) or not math.isfinite(v)) for v in (delay, ttl)):
-            raise ValueError('Invalid initiative timing')
-        if delay is not None:
-            validate_initiative_timing(delay, ttl if ttl is not None else max(120, delay + 1))
-        if ttl is not None:
-            validate_initiative_timing(delay if delay is not None else 0, ttl)
+        if (type(self.delay_seconds) not in (int, float) or not math.isfinite(self.delay_seconds)
+                or self.delay_seconds < 0):
+            raise ValueError('Invalid initiative delay')
 
 
 @dataclass(frozen=True)
 class InitiativeCancel:
-    reason: str
-
-    def __post_init__(self) -> None:
-        if not isinstance(self.reason, str) or not self.reason.strip() or len(self.reason) > 1000:
-            raise ValueError('Invalid initiative cancellation')
+    pass
 
 
 @dataclass(frozen=True)
@@ -67,33 +44,14 @@ class DeepRequest:
     compaction: CompactionInput | None = None
     working_context_tokens: int = 2048
     initiative_allowed: bool = False
-    captured_at: str = ''
-    initiative_delay_seconds: float = 5.0
-    initiative_ttl_seconds: float = 120.0
+    pending_initiative: Event | None = None
+    recovery_epoch: ContextEpoch | None = None
 
 
 @dataclass(frozen=True)
 class DeepResult:
     schema_version: int
     request_id: str
-    note: NoteProposal | None = None
-    compaction: CompactionProposal | None = None
-    initiative: InitiativeProposal | InitiativeCancel | None = None
-
-
-@dataclass(frozen=True)
-class DeepDecision:
-    request_id: str
-    note: UpdateResult | None
-    compaction: CompactionResult | None
-    acknowledged: bool
-    reason: str
-    initiative_reason: str | None = None
-
-
-def evidence_ids(request: DeepRequest) -> set[str]:
-    events = request.events + request.snapshot.recent_dialogue
-    if request.compaction:
-        events += request.compaction.events
-    return {e.event_id for e in events if e.kind in ('user.message.completed', 'character.reply.completed')} | {
-        source for item in request.snapshot.epoch.items for source in item.source_event_ids}
+    note: str | None = None
+    compaction: str | None = None
+    initiative: InitiativeSpeak | InitiativeCancel | None = None

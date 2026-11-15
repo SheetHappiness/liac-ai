@@ -58,3 +58,9 @@ M4.4 source Conversation Lab adds isolated simulation runs and read-only replay.
 `lab/` owns research clients, not cognition; read its AGENTS before changes.
 Full long-provider acceptance is currently deferred by the user. See
 `docs/M4_4_CONVERSATION_LAB.md`; the old bundled executable predates M4.4.
+
+M4.5 makes Luna the cognitive owner: schema-v3 direct Markdown, summary and intent.
+Runtime checks technical budgets, ordering and atomic execution only. Budget-only
+Epoch fallback is temporary degradation with durable Luna recovery. No initiative
+TTL/cooldown, evidence or revision guards. Preserve old Lab archives read-only.
+M4.5 verification is limited to short technical checks; no full provider simulation.

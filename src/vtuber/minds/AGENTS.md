@@ -21,13 +21,7 @@ text-visible OMP session context. Never recompile a newer snapshot for a histori
 trace, capture auth headers or call a session view the exact provider request.
 Opaque signatures, provider payloads and reasoning content are omitted.
 
-M4.2 parses Markdown as one schema-v1 note text field (32768 UTF-8 bytes).
-Luna receives a configured token budget; sections and almost-ready lines are
-optional. Preserve whitespace/empty clears; user corrections outrank old ideas.
-
-M4.3 current Luna role returns strict schema-v2 JSON with optional initiative;
-legacy v1 remains accepted. Speak requires request permission and real evidence;
-none preserves a pending intent and cancel explicitly withdraws it. Keep content
-in free Markdown, timing authority in Runtime, and naturalness in real dialogue.
-Fast compiles character opportunity control text at the tail; ordinary user wire
-prompts stay compatible. Never label the control input as actual user speech.
+M4.5 parses strict schema-v3 direct Markdown/summary/initiative. Validate types,
+size and finite delay, not evidence or relevance. Luna owns behavioral perspective;
+Nemotron chooses natural words. Keep Markdown at the prompt tail. None preserves
+pending work; cancel explicitly withdraws. User corrections outrank old context.

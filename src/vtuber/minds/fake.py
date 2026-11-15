@@ -4,7 +4,7 @@ from dataclasses import dataclass
 from typing import AsyncGenerator
 
 from vtuber.contracts.events import UserMessage, FastInput
-from vtuber.contracts.state import FastSnapshot, NoteProposal
+from vtuber.contracts.state import FastSnapshot
 from vtuber.contracts.deep import DeepRequest, DeepResult
 
 
@@ -27,12 +27,10 @@ class FakeDeep:
 
     async def propose(self, request: DeepRequest) -> DeepResult:
         await asyncio.sleep(self.delay)
-        state, events = request.snapshot.state, request.events
+        events = request.events
         messages = [event for event in events if event.kind == "user.message.completed"]
         if not messages:
-            return DeepResult(1, request.request_id)
+            return DeepResult(3, request.request_id)
         latest = messages[-1]
-        return DeepResult(1, request.request_id, NoteProposal(
-            request.request_id + ':note',
-            state.character_id, state.revision, events[-1].sequence,
-            (latest.event_id,), f"Last user message: {latest.payload['text'][:160]}"))
+        return DeepResult(3, request.request_id,
+                          f"Last user message: {latest.payload['text'][:160]}")

@@ -13,6 +13,8 @@ from vtuber.minds.omp import OMPSettings
 
 def config_from_dict(data: dict) -> Config:
     data = dict(data)
+    for name in ('initiative_delay_seconds', 'initiative_ttl_seconds', 'initiative_cooldown_seconds'):
+        data.pop(name, None)
     data['db'] = Path(data['db'])
     data['tokenizer'] = Path(data['tokenizer'])
     if data.get('identity'):

@@ -277,3 +277,19 @@ live smoke was interrupted after five simulated messages; it is not a completed
 12-turn or multi-hour test. See [architecture, evidence and limits](docs/M4_4_CONVERSATION_LAB.md).
 Opt-in acceptance: `python scripts/verify_m2_luna.py --phase initiative`; controlled
 cache probes: `python scripts/verify_m1_5_context.py --phase initiative-cache`.
+
+## M4.5: Luna-owned context
+
+Luna directly replaces the current Markdown and authors compacted Epoch content.
+Fast remains asynchronous and reads a frozen snapshot; Markdown stays after the
+stable identity, Epoch and exact history. SQLite is authoritative for context.md.
+Local budget-only compaction is explicitly temporary degradation; canonical
+history remains available for Luna recovery, including after restart.
+
+With `--enable-initiative`, Luna may schedule intent with a nonnegative delay,
+replace it or explicitly cancel it. Null/none preserves pending work. User speech
+preempts autonomous speech; shutdown/restart withdraw pending work. Runtime no
+longer imposes TTL, cooldown, evidence or relevance guards. Luna sees pending work
+to reconsider it; a topic change alone may leave intent stale until that analysis.
+Old archived timing options are ignored on resume. New results use `deep.applied`;
+M4.4 traces remain readable. See [implementation](docs/M4_5_RUNTIME_SIMPLIFICATION.md).

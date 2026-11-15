@@ -4,10 +4,8 @@ import asyncio
 from unittest.mock import patch
 from pathlib import Path
 
-from vtuber.contracts.context import CompactionProposal, ContextItem
 from vtuber.contracts.deep import DeepResult
 from vtuber.contracts.events import Event, UserMessage
-from vtuber.contracts.state import NoteProposal
 from vtuber.runtime.journal import EventConflict, Journal
 from vtuber.runtime.deep import DeepWorker
 from vtuber.minds.fake import FakeFast
@@ -32,27 +30,20 @@ class DeepJournalTests(unittest.TestCase):
             turn_id=message.turn_id, causation_id=message.event_id))
 
     def result(self, request, compact=False):
-        source = request.events[0].event_id
-        return DeepResult(1, request.request_id,
-            NoteProposal(request.request_id+':note', 'primary', request.snapshot.state.revision,
-                request.snapshot.through_sequence, (source,), 'new note'),
-            CompactionProposal(request.request_id+':epoch', 'primary', request.snapshot.epoch.version,
-                request.snapshot.state.revision, request.snapshot.through_sequence,
-                request.compaction.cutoff, (ContextItem('summary', (source,), 'summary'),)) if compact else None)
+        return DeepResult(3, request.request_id, 'new note', 'summary' if compact else None)
 
     def test_markdown_replace_clear_and_no_change(self):
         from dataclasses import replace
         for index, (text, revision, reason) in enumerate([
-                ('  # Custom\n' + 'x'*1100 + '\n ', 1, 'applied'),
-                ('  # Custom\n' + 'x'*1100 + '\n ', 1, 'no_change'),
-                ('', 2, 'applied'), ('', 2, 'no_change'), (None, 2, None)]):
+                ('  # Custom\n' + 'x'*1100 + '\n ', 1, 'changed'),
+                ('  # Custom\n' + 'x'*1100 + '\n ', 1, 'unchanged'),
+                ('', 2, 'changed'), ('', 2, 'unchanged'), (None, 2, 'unchanged')]):
             self.finish(self.user())
             request = self.journal.deep_request('primary', request_id=f'markdown-{index}')
             result = self.result(request)
-            result = replace(result, note=replace(result.note, note=text) if text is not None else None)
+            result = replace(result, note=text)
             decision = self.journal.apply_deep(request, result)
-            self.assertTrue(decision.acknowledged)
-            self.assertEqual(decision.note.reason if decision.note else None, reason)
+            self.assertEqual(decision['context'], reason)
             self.journal.close()
             self.journal = Journal(Path(self.folder.name) / 'deep.db')
             self.addCleanup(self.journal.close)
@@ -60,27 +51,12 @@ class DeepJournalTests(unittest.TestCase):
             self.assertEqual(self.journal.snapshot('primary').context_note, text or '')
             self.assertGreaterEqual(self.journal.cursor('primary'), request.snapshot.through_sequence)
 
-    def test_budget_rejects_whole_batch_and_fingerprints_request(self):
-        from dataclasses import replace
-        self.finish(self.user())
-        request = self.journal.deep_request('primary', request_id='markdown-budget', compact=True, working_context_tokens=1024)
-        self.assertEqual(request.working_context_tokens, 1024)
-        result = self.result(request, True)
-        decision = self.journal.apply_deep(request, result, context_error='working_context_budget_exceeded')
-        self.assertFalse(decision.acknowledged)
-        self.assertEqual(self.journal.snapshot('primary').revision, 0)
-        self.assertEqual(self.journal.context_epoch('primary').version, 0)
-        self.assertEqual(self.journal.cursor('primary'), 0)
-        self.assertEqual(self.journal.apply_deep(request, result, context_error='working_context_budget_exceeded'), decision)
-        with self.assertRaises(EventConflict):
-            self.journal.apply_deep(replace(request, working_context_tokens=2048), result, context_error='working_context_budget_exceeded')
-
     def test_new_dialogue_does_not_invalidate_document(self):
         self.finish(self.user())
         request = self.journal.deep_request('primary', request_id='late-document')
         newer = self.user('Stop joking about this project.')
         decision = self.journal.apply_deep(request, self.result(request))
-        self.assertTrue(decision.acknowledged)
+        self.assertEqual(decision['through'], request.snapshot.through_sequence)
         self.assertEqual(self.journal.cursor('primary'), request.snapshot.through_sequence)
         snapshot = self.journal.fast_snapshot('primary')
         self.assertIn(newer.event_id, [e.event_id for e in snapshot.recent_dialogue])
@@ -108,7 +84,7 @@ class DeepJournalTests(unittest.TestCase):
         self.journal._db.execute("CREATE TRIGGER fail_deep BEFORE INSERT ON events WHEN json_extract(NEW.content, '$.kind')='deep.batch.completed' BEGIN SELECT RAISE(FAIL,'test'); END")
         for text in ('# Context\n' + 'x'*1100, ''):
             result = self.result(request, True)
-            result = replace(result, note=replace(result.note, note=text))
+            result = replace(result, note=text)
             with self.assertRaises(Exception):
                 self.journal.apply_deep(request, result)
         self.assertEqual(self.journal.snapshot('primary').revision, 0)
@@ -123,16 +99,15 @@ class DeepJournalTests(unittest.TestCase):
         decision = self.journal.apply_deep(request, result)
         self.assertEqual(self.journal.apply_deep(request, result), decision)
         with self.assertRaises(EventConflict):
-            self.journal.apply_deep(request, DeepResult(1, 'replay'))
+            self.journal.apply_deep(request, DeepResult(3, 'replay'))
 
     def test_initiative_atomic_replay_and_restart(self):
         from dataclasses import replace
-        from vtuber.contracts.deep import InitiativeProposal, InitiativeCancel
+        from vtuber.contracts.deep import InitiativeSpeak, InitiativeCancel
         message = self.user()
         self.finish(message)
         request = self.journal.deep_request('primary', request_id='initiative', initiative_allowed=True)
-        result = replace(self.result(request), initiative=InitiativeProposal('Ask about the hat',
-            'An unfinished design', (message.event_id,), 0, 120))
+        result = replace(self.result(request), initiative=InitiativeSpeak('Ask about the hat'))
         self.journal._db.execute("CREATE TRIGGER fail_deep BEFORE INSERT ON events WHEN json_extract(NEW.content, '$.kind')='deep.batch.completed' BEGIN SELECT RAISE(FAIL,'test'); END")
         with self.assertRaises(Exception):
             self.journal.apply_deep(request, result)
@@ -140,14 +115,14 @@ class DeepJournalTests(unittest.TestCase):
         self.assertEqual(self.journal.cursor('primary'), 0)
         self.journal._db.execute('DROP TRIGGER fail_deep')
         decision = self.journal.apply_deep(request, result)
-        self.assertEqual(decision.initiative_reason, 'accepted')
+        self.assertEqual(decision['initiative'], 'scheduled')
         pending = self.journal.pending_initiative('primary')
         self.assertEqual(self.journal.apply_deep(request, result), decision)
         with self.assertRaises(EventConflict):
-            self.journal.apply_deep(request, DeepResult(1, request.request_id))
+            self.journal.apply_deep(request, DeepResult(3, request.request_id))
         # A compaction-only observer returning none must preserve identity and deadlines.
         noop = self.journal.deep_request('primary', request_id='none', compact=True, initiative_allowed=True)
-        self.journal.apply_deep(noop, DeepResult(1, noop.request_id))
+        self.journal.apply_deep(noop, DeepResult(3, noop.request_id))
         self.assertEqual(self.journal.pending_initiative('primary'), pending)
         snapshot = self.journal.fast_snapshot('primary')
         initiative = self.journal.claim_initiative(pending.event_id, snapshot)
@@ -164,110 +139,71 @@ class DeepJournalTests(unittest.TestCase):
         request = self.journal.deep_request('primary', request_id='observe', initiative_allowed=True)
         self.assertIn(initiative.event_id, [e.event_id for e in request.events])
         self.assertTrue(any(e.kind == 'character.reply.completed' and e.turn_id == initiative.turn_id for e in request.events))
-        self.journal.apply_deep(request, DeepResult(2, request.request_id, initiative=InitiativeProposal(
-            'New idea', 'New topic', (newer.event_id,), 0, 120)))
+        self.journal.apply_deep(request, DeepResult(3, request.request_id, initiative=InitiativeSpeak('New idea')))
         pending = self.journal.pending_initiative('primary')
-        # A cancellation captured before this proposal cannot withdraw it.
-        stale_cancel = replace(request, request_id='stale-cancel', cursor_from=self.journal.cursor('primary'))
-        self.journal.apply_deep(stale_cancel, DeepResult(2, stale_cancel.request_id,
-            initiative=InitiativeCancel('Old request')))
-        self.assertEqual(self.journal.pending_initiative('primary'), pending)
-        self.assertIsNone(self.journal.claim_initiative(pending.event_id,
-            self.journal.fast_snapshot('primary'), cooldown_seconds=60))
+        # Luna receives pending work and can cancel it explicitly without an anchor.
         cancel = self.journal.deep_request('primary', request_id='withdraw', compact=True)
-        self.journal.apply_deep(cancel, DeepResult(2, cancel.request_id, initiative=InitiativeCancel('Finished')))
+        self.assertEqual(cancel.pending_initiative, pending)
+        self.journal.apply_deep(cancel, DeepResult(3, cancel.request_id, initiative=InitiativeCancel()))
         self.assertIsNone(self.journal.pending_initiative('primary'))
         self.assertIsNone(self.journal.claim_initiative(pending.event_id, self.journal.fast_snapshot('primary')))
-        request = self.journal.deep_request('primary', request_id='expiry', compact=True, initiative_allowed=True)
-        self.journal.apply_deep(request, DeepResult(2, request.request_id, initiative=InitiativeProposal(
-            'Another idea', 'New topic', (newer.event_id,), 0, 120)))
-        pending = self.journal.pending_initiative('primary')
-        with patch('vtuber.runtime.journal.utc_now', return_value=pending.payload['expires_at']):
-            self.assertIsNone(self.journal.claim_initiative(pending.event_id, self.journal.fast_snapshot('primary')))
-        self.assertIsNone(self.journal.pending_initiative('primary'))
         self.assertEqual(self.journal._db.execute('PRAGMA integrity_check').fetchone()[0], 'ok')
 
     def test_late_initiative_does_not_reject_markdown(self):
         from dataclasses import replace
-        from vtuber.contracts.deep import InitiativeProposal
+        from vtuber.contracts.deep import InitiativeSpeak
         message = self.user()
         self.finish(message)
         request = self.journal.deep_request('primary', request_id='late-initiative', initiative_allowed=True)
         self.user('Stop joking')
-        result = replace(self.result(request), initiative=InitiativeProposal('A joke', 'Shared context', (message.event_id,)))
+        result = replace(self.result(request), initiative=InitiativeSpeak('A joke'))
         decision = self.journal.apply_deep(request, result)
-        self.assertTrue(decision.acknowledged)
-        self.assertEqual(decision.initiative_reason, 'stale')
+        self.assertEqual(decision['through'], request.snapshot.through_sequence)
+        self.assertEqual(decision['initiative'], 'scheduled')
         self.assertEqual(self.journal.snapshot('primary').context_note, 'new note')
-        self.assertIsNone(self.journal.pending_initiative('primary'))
-
-    def test_budget_rejection_is_durable_and_replayable(self):
-        self.finish(self.user())
-        request = self.journal.deep_request('primary', request_id='budget', compact=True)
-        decision = self.journal.apply_deep(request, self.result(request, True), compaction_error='context_budget_exceeded')
-        self.assertFalse(decision.acknowledged)
-        self.assertEqual(self.journal.cursor('primary'), 0)
-        self.assertEqual(self.journal.snapshot('primary').revision, 0)
-        self.assertEqual(self.journal.context_epoch('primary').version, 0)
-        self.assertEqual(self.journal.get('compaction_budget:epoch').kind, 'context.epoch.rejected')
-
-    def test_default_budget_replays_legacy_batch_fingerprint(self):
-        from dataclasses import asdict
-        from hashlib import sha256
-        from vtuber.contracts.events import canonical_json
-        self.finish(self.user())
-        request = self.journal.deep_request('primary', request_id='legacy')
-        result = self.result(request)
-        self.journal.apply_deep(request, result)
-        data = asdict(request)
-        del data['working_context_tokens']
-        for field in ('initiative_allowed', 'captured_at', 'initiative_delay_seconds', 'initiative_ttl_seconds'):
-            del data[field]
-        result_data = asdict(result)
-        del result_data['initiative']
-        legacy = sha256(canonical_json({'request': data, 'result': result_data,
-            'compaction_error': None}).encode()).hexdigest()
-        self.assertEqual(self.journal.get('deep_legacy').payload['fingerprint'], legacy)
-        self.assertTrue(self.journal.apply_deep(request, result).acknowledged)
+        self.assertIsNotNone(self.journal.pending_initiative('primary'))
 
     def test_audit_tail_is_not_observation(self):
         self.finish(self.user())
         request = self.journal.deep_request('primary', request_id='no-op')
-        self.journal.apply_deep(request, DeepResult(1, 'no-op'))
+        self.journal.apply_deep(request, DeepResult(3, 'no-op'))
         self.assertIsNone(self.journal.deep_request('primary', request_id='tail'))
         self.assertEqual(self.journal.cursor('primary'), self.journal.high_watermark('primary'))
-
-    def test_stale_reconsideration(self):
-        self.finish(self.user())
-        request = self.journal.deep_request('primary', request_id='old', compact=True)
-        source = request.events[0].event_id
-        self.journal.apply_note(NoteProposal('other', 'primary', 0, 2, (source,), 'other note'))
-        decision = self.journal.apply_deep(request, self.result(request, True))
-        self.assertFalse(decision.acknowledged)
-        self.assertEqual(self.journal.cursor('primary'), 0)
-        fresh = self.journal.deep_request('primary', request_id='fresh', compact=True)
-        self.assertTrue(self.journal.apply_deep(fresh, self.result(fresh, True)).acknowledged)
-
-    def test_note_only_epoch_dependency_rejects(self):
-        self.finish(self.user())
-        request = self.journal.deep_request('primary', request_id='old-note', compact=True)
-        self.journal.apply_compaction(self.result(request, True).compaction)
-        result = self.journal.apply_deep(request, self.result(request))
-        self.assertFalse(result.acknowledged)
-        self.assertEqual(result.reason, 'epoch_conflict')
-        self.assertEqual(self.journal.snapshot('primary').revision, 0)
-        self.assertEqual(self.journal.cursor('primary'), 0)
 
     def test_late_epoch_preserves_new_turns(self):
         self.finish(self.user())
         request = self.journal.deep_request('primary', request_id='late', compact=True)
         newer = self.user('green correction')
-        self.finish(newer)
+        terminal = self.finish(newer)
         decision = self.journal.apply_deep(request, self.result(request, True))
-        self.assertTrue(decision.acknowledged)
+        self.assertEqual(decision['through'], request.snapshot.through_sequence)
         self.assertIn(newer.event_id, [e.event_id for e in self.journal.fast_snapshot('primary').recent_dialogue])
         self.assertEqual(self.journal.snapshot('primary').revision, 1)
         self.assertEqual(self.journal.context_epoch('primary').version, 1)
+
+        from vtuber.contracts.context import CompactionProposal
+        from vtuber.contracts.deep import InitiativeSpeak
+        epoch = self.journal.context_epoch('primary')
+        local = CompactionProposal('budget-only', 'primary', epoch.version, 1,
+            self.journal.high_watermark('primary'), terminal.sequence, ())
+        self.assertTrue(self.journal.apply_compaction(local).accepted)
+        self.journal.close()
+        self.journal = Journal(Path(self.folder.name) / 'deep.db')
+        self.addCleanup(self.journal.close)
+        recovery = self.journal.deep_request('primary', request_id='recover', initiative_allowed=True)
+        self.assertEqual(recovery.recovery_epoch, epoch)
+        self.assertIn(newer.event_id, [e.event_id for e in recovery.compaction.events])
+        self.journal.apply_deep(recovery, DeepResult(3, recovery.request_id,
+            initiative=InitiativeSpeak('still pending')))
+        pending = self.journal.pending_initiative('primary')
+        message = self.journal.claim_initiative(pending.event_id, self.journal.fast_snapshot('primary'))
+        self.finish(message)
+        self.assertIsNone(self.journal.deep_request('primary', request_id='no-loop'))
+        self.assertIsNone(self.journal.deep_request('primary', request_id='no-pressure-loop', compact=True))
+        retried = self.journal.deep_request('primary', request_id='explicit', recover=True)
+        self.assertIsNotNone(retried.compaction)
+        self.journal.apply_deep(retried, DeepResult(3, retried.request_id, compaction='Rebuilt continuity'))
+        self.assertFalse(self.journal.epoch_recovery('primary')['recovery_pending'])
 
 
 class DeepWorkerTests(unittest.IsolatedAsyncioTestCase):
@@ -277,7 +213,7 @@ class DeepWorkerTests(unittest.IsolatedAsyncioTestCase):
             async def propose(self,request):
                 entered.set()
                 try:await asyncio.Event().wait()
-                except asyncio.CancelledError:return DeepResult(1,request.request_id)
+                except asyncio.CancelledError:return DeepResult(3,request.request_id)
         with tempfile.TemporaryDirectory() as folder:
             journal=Journal(Path(folder)/'runtime.db')
             try:
@@ -298,7 +234,7 @@ class DeepWorkerTests(unittest.IsolatedAsyncioTestCase):
             journal.close()
             journal = Journal(path)
             class Deep:
-                async def propose(self, request): return DeepResult(1,request.request_id)
+                async def propose(self, request): return DeepResult(3,request.request_id)
             try:
                 async with Runtime('primary',journal,FakeFast(0),Deep(),lambda _:None) as runtime:
                     await(await runtime.submit(UserMessage('after restart')))
@@ -353,7 +289,7 @@ class DeepWorkerTests(unittest.IsolatedAsyncioTestCase):
             async def propose(self, request):
                 self.calls += 1
                 self.compactions.append(request.compaction)
-                return DeepResult(1, request.request_id)
+                return DeepResult(3, request.request_id)
         with tempfile.TemporaryDirectory() as folder:
             journal = Journal(Path(folder)/'runtime.db')
             deep = Deep()
@@ -378,9 +314,7 @@ class DeepWorkerTests(unittest.IsolatedAsyncioTestCase):
                 requests.append(request)
                 entered.set()
                 await release.wait()
-                return DeepResult(1, request.request_id, NoteProposal(request.request_id+':note',
-                    'primary', request.snapshot.state.revision, request.snapshot.through_sequence,
-                    (request.events[0].event_id,), '# Context\nA useful future angle.'))
+                return DeepResult(3, request.request_id, '# Context\nA useful future angle.')
         with tempfile.TemporaryDirectory() as folder:
             journal = Journal(Path(folder)/'runtime.db')
             try:
@@ -394,7 +328,7 @@ class DeepWorkerTests(unittest.IsolatedAsyncioTestCase):
                     async with asyncio.timeout(1):
                         while journal.snapshot('primary').revision == 0:
                             await asyncio.sleep(.001)
-                    self.assertTrue(all(e.payload['decision']['acknowledged'] for e in
+                    self.assertTrue(all(e.payload['application']['through'] <= journal.cursor('primary') for e in
                         journal.read('primary') if e.kind == 'deep.batch.completed'))
                     self.assertEqual(journal.snapshot('primary').context_note, '# Context\nA useful future angle.')
             finally: journal.close()

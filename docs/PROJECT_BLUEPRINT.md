@@ -74,8 +74,8 @@ Character mood, needs and relationships are explicit computational state for bel
 | D-03 | Fast: no reasoning, stateless OpenAI-compatible LM Studio calls | DECIDED for target behavior; model/server config needs verification | Minimize latency, explicit prompt ownership |
 | D-04 | GPT-6 Luna via isolated OMP RPC as asynchronous Deep Mind | PROVISIONAL adapter; architectural role DECIDED | Long context and reflection off the critical path |
 | D-05 | Fast never waits for a Deep inference on a normal turn | DECIDED / hard invariant | Predictable responsiveness |
-| D-06 | Canonical event journal, state and memory belong to runtime | DECIDED | No competing model-owned truths |
-| D-07 | Deep consumes a durable event stream, sends typed proposals | DECIDED | Replay, deduplication, auditing |
+| D-06 | Runtime persists canonical history; Luna owns context and intentions | DECIDED | Luna owns cognition; Runtime owns execution |
+| D-07 | Deep observes durable events and returns direct context/intent updates | DECIDED | Atomic application and replay, no behavioral approval |
 | D-08 | Luna can suggest *specific* humor/content beats, not merely neutral topics | DECIDED | Character-first design |
 | D-09 | Existing Hindsight is a candidate, not a required dependency | EXPERIMENT | Need to validate real memory quality |
 | D-10 | Character motivation is intentionally minimal at first | DECIDED | Avoid overengineering artificial drive sliders |
@@ -161,25 +161,20 @@ This is a **logical** diagram: a single Python process can implement journal, re
 
 ### 4.1 No hidden authority split [DECIDED]
 
-The **state store owns the truth**. Luna owns *proposals*, not state. Fast owns *the generated utterance*, not memory. An LLM may offer facts or interpretations; only a verified deterministic state reducer can commit them.
+**Luna owns cognition. Runtime owns execution.** SQLite holds canonical history and state. Luna decides what to remember, reinterpret or forget, the current Markdown perspective and autonomous intent. Nemotron expresses that perspective naturally. Runtime counts tokens, commits atomically, streams and cancels; it does not approve the content of Luna decisions.
 
 Fast and Luna see the same source events, but NOT at the same time nor at the same fidelity. Fast receives a small, immediately compiled projection. Luna can query a larger historical range, but its OMP context is only a temporary cache and is not guaranteed to contain or attend to every event.
 
 ### 4.2 Specific duties
 
-| Capability | Fast | Luna | Deterministic code |
+| Capability | Fast | Luna | Runtime |
 |---|---|---|---|
-| Produce character text | Yes | Only as hidden semantic proposals or exact data payloads | Stream and render |
-| Choose local tone/phrasing | Yes | May specify tone/beat | Enforce boundaries/TTL |
-| Process new user turn promptly | Yes | Eventually | Route without awaiting Luna |
-| Receive durable history | Small projection | Cursor + replay/query | Journal owns history |
-| Extract, select, revise long-term memories | No | Yes | Validate source and commit |
-| Compact Fast working context | No | Suggest compact patches | Build bounded prompt, enforce pinning |
-| Surface old relevant memories | Read projection | Discover/restore asynchronously | Cache retrieval, merge and expire |
-| Create agenda/performance beats | Can improvise | Yes | Trigger, cooldown, consume once |
-| Control tools and permissions | No unrestricted tools | May request | Action broker validates |
-| Update immutable identity | No | Only deliberate proposal | Human approval for core identity |
-| Crash recovery and persistence | No | No | Yes |
+| Character speech | Natural wording | Current behavioral perspective | Stream and render |
+| New user turn | Respond promptly | Observe asynchronously | Never await Luna |
+| Context and memory selection | Read frozen projection | Author Markdown and Epoch content | Budget, persist and project |
+| Autonomous initiative | Express intent | Schedule, replace or cancel | Delay, consume once, user priority |
+| Tools and identity | No arbitrary access | No arbitrary access or identity edits | Preserve confinement and owner configuration |
+| Recovery | No | Rebuild context from canonical history | Journal, retries and task lifecycle |
 
 ### 4.3 Voice and future sensors
 
@@ -199,7 +194,7 @@ Future STT is merely another input port emitting finalized `user_message` events
 
 **I-04** Each Fast request receives a frozen prompt snapshot; mid-generation Luna patches apply to future turns unless an explicit cancel/restart occurs.
 
-**I-05** Luna operations are typed proposals, validated against schemas, authority and source evidence. Invalid or stale patches are rejected, not silently patched into state.
+**I-05** Luna results receive only technical type, size, budget, ordering and atomicity checks. Markdown needs no evidence or revision approval; newer events do not veto it. Active Fast snapshots remain immutable.
 
 **I-06** Deep's event-processing cursor advances only after durable acknowledgement of processed range and committed/idempotently recorded proposals; failed ranges can replay safely.
 
@@ -369,7 +364,7 @@ OMP is designed as a coding agent; runtime must disable or restrict filesystem/s
 
 `DeepInbox` persists `(character_id, consumer_id, last_committed_sequence)` independently. Construct a batch containing the raw relevant events and state revision. If Deep is busy, never spawn overlapping calls in the same session; group subsequent events, coalesce sensor updates and prioritize direct `analyze` requests over background refinements. Do not drop source events from Journal.
 
-A batch result is parsed into **proposal objects**. Validate and commit idempotently, then advance consumer cursor. If proposals are stale, record reasons and either acknowledge the observed input or schedule a fresh reconsideration; never repeatedly replay a terminally rejected proposal forever.
+A batch result is decoded as direct Markdown, optional summary and intent. Check technical limits and apply atomically with execution facts and the observed cursor. Failed execution preserves the cursor; repeated request IDs cannot execute twice.
 
 ### 8.5 Deep context is not memory storage
 
@@ -377,101 +372,53 @@ Large context reduces retrieval calls but is not persistent truth. OMP auto/manu
 
 ### 8.6 Failure rules
 
-Luna timeout/offline/rate limit: mark Deep degraded, retry with exponential backoff and cap, preserve cursor, continue Fast. Context patches expire on schedule. Important pending explicit requests can be surfaced as `pending` to Fast; never claim completion. Configurable backpressure stops automatic nonessential Deep jobs if queue or subscription usage approaches a threshold. No infinite retry loops.
+Luna timeout/offline/rate limit: mark Deep degraded, retry with exponential backoff and cap, preserve cursor, continue Fast. Markdown persists until Luna replaces or clears it. Important pending explicit requests can be surfaced as `pending` to Fast; never claim completion. Configurable backpressure stops automatic nonessential Deep jobs if queue or subscription usage approaches a threshold. No infinite retry loops.
 
 ---
 ## 9. Luna → Fast update protocol
 
-**Boundary:** Luna proposes `DeepProposalBatch`; `RuntimeReducer` validates and applies proposals. No direct mutation of live Fast prompts, Journal or database by Luna/OMP tools.
-
-**DECIDED (M4.2):** The implemented schema-v1 envelope contains optional
-`note: {text, source_event_ids}` and optional M2 `compaction`; Runtime supplies all
-authority fields. Markdown is one text field, without a mandatory section schema.
-The structured attention taxonomy, performance beat scheduler and richer envelope
-below remain **FUTURE**, not requirements for the current runtime. See
-[M4.2 implementation](M4_2_IMPLEMENTATION.md) for behavior and measured limits.
-
-### 9.1 Proposal envelope
+**DECIDED (M4.5):** One serialized Luna worker returns the minimal schema-v3 envelope:
 
 ```json
-{
-  "schema_version": 1,
-  "proposal_id": "prop_01...",
-  "character_id": "primary",
-  "based_on_state_revision": 42,
-  "observed_through_sequence": 581,
-  "created_at": "2026-11-11T17:00:03Z",
-  "operations": [
-    {
-      "operation_id": "op_01...",
-      "type": "context.note.upsert",
-      "note_id": "note_current_game",
-      "kind": "observation",
-      "content": "The player is frustrated after multiple losses",
-      "source_event_ids": [570, 581],
-      "ttl_seconds": 180
-    },
-    {
-      "operation_id": "op_02...",
-      "type": "performance.beat.schedule",
-      "beat_id": "beat_repeated_losses",
-      "intent": "playful_roast",
-      "semantic_direction": "Tease Aaron about playing so badly that uninstalling the game might be the next strategy",
-      "delivery": "exaggerated, cheeky, not genuinely hostile",
-      "trigger": {"event_kind": "game.match.lost", "within_seconds": 300},
-      "one_shot": true,
-      "source_event_ids": [570, 581],
-      "expires_at": "2026-11-11T17:05:00Z"
-    }
-  ]
-}
+{"schema_version":3,"note":null,"compaction":null,"initiative":null}
 ```
 
-This is **illustrative shape**, not final Pydantic field naming; an implementation must define and version the strict schema before writing a parser. A beat can be semantically specific, including a near-ready line, yet the Fast model ordinarily controls wording and delivery. An exact immutable text block is reserved for precision-critical tool results, not comedy direction.
+`note` is a whole Markdown string; null preserves, empty clears, identical text
+preserves revision. Runtime atomically stores content, execution facts and the
+captured cursor range. No sources, semantic dependencies, proposal fingerprint or
+behavioral approval. Technical errors preserve the cursor for bounded retry.
+SQLite is authoritative; context.md is its recoverable file projection.
 
-### 9.2 Minimal operation taxonomy
+The next Fast request sees current Markdown; streaming Fast retains its snapshot.
+Prompt order remains stable identity → immutable Epoch → exact dialogue →
+Markdown → current input. Only the tail changes for a Markdown-only update.
+Luna controls perspective; Nemotron chooses natural words rather than managing a
+competing personality. Identity and OMP tool confinement remain owner-controlled.
 
-- `context.note.upsert` / `.remove` – temporary relevance hints.
-- `context.pin.upsert` / `.remove` – important working facts, never overriding identity or user corrections.
-- `memory.candidate.propose` – candidate, evidence and status for later validation or ingestion.
-- `memory.item.update` / `.retract` – revise a known memory; must reference stable memory id.
-- `performance.beat.schedule` / `.cancel` – a specific expressive opportunity with conditions and expiry.
-- `intention.propose` / `.abandon` – personal goal candidates, not automatic tool commands.
-- `task.result.publish` – completed analysis/result, with provenance and exactness flag.
+### 9.1 Context Epochs
 
-The original v0 proposal required context notes and beats; M4.2 implements only
-Markdown context and the existing epoch compaction. Beats remain FUTURE. Memory/intention/result operations are typed and documented now, but not implemented until milestones. Unknown types reject with explicit diagnostic; do not auto-create generic dict-based plugins.
+Luna authors summary text when compaction is requested. Runtime keeps local token
+budgets, complete-turn boundaries and monotonic cutoffs. Superseded summaries
+cannot rewind history and do not veto Markdown. Journal and previous Epochs remain.
 
-### 9.3 Proposal precedence and conflicts
+Under local pressure Runtime keeps a suffix of whole turns and the previous Epoch
+whole when it fits. Omitting an oversized Epoch is a **temporary degraded
+projection**, never authorized forgetting. Existing transition events preserve a
+meaningful-Epoch reference and pending recovery. The next ordinary or retried Luna
+cycle receives that Epoch and required canonical history even if pressure fell;
+only an applied Luna summary clears pending recovery. Overflow remains explicit
+degradation. No importance ranking, extract selection or oldest-user anchor.
 
-Priority order: explicit user correction / deletion > safety and permissions > stable identity constraints > verified tool result > recent raw dialogue > curator memory > Director suggestion/beat. A lower-priority patch must never overwrite a higher-priority source. Expiration and revisions are checked in deterministic reducer.
+### 9.2 Initiative
 
-- Compare `based_on_state_revision` and `observed_through_sequence` to current state.
-- Some independent additive proposals may be safely rebased; **do not silently rebase overwrites or contradictions**.
-- Changes affecting a currently streaming Fast prompt apply to *next turn*.
-- Deduplicate `proposal_id` and `operation_id` atomically; retries are safe.
-- Beat must specify trigger, expiry, one-shot/cooldown, source and optionally target audience/locale.
-- Record rejected/expired/consumed beats with reason so Luna can learn from observed outcome.
-- No direct arbitrary system-prompt edits from Luna; identity is immutable under ordinary proposals.
-- Free-form `reason` field is developer evidence, not mandatory visible speech; the actual private reasoning trace is not stored.
-
-### 9.4 Context compaction protocol
-
-Deep sends targeted note/memory operations, **not** wholesale replacement of Fast history. The compiler owns eviction using budgets. Preserve important *verbatim* recent messages, corrections and pending task outcomes. A summary is a **projection with source range and version**, never a replacement for Journal. Summaries must distinguish confirmed events, interpretations and subjective fictional attitude.
-
-**DECIDED (M1.5):** A typed `CompactionProposal` names its base epoch, note revision,
-observed watermark, compacted cutoff and attributed items. Runtime checks local
-item budget; Journal validates provenance and terminal-turn boundaries, CASes the
-bases and atomically records the next epoch plus decision. Late proposals preserve
-newer exact events; stale bases reject without rebasing. Raw events and Deep cursor
-are unchanged. Deterministic fallback keeps an oldest-user anchor, recent extracts
-(2048-token block, 256-token/item cap) and up to three whole recent turns within
-2048 tokens. Extracts are incomplete projections, not a guarantee of remembering
-all important facts. M2 adds optional semantic Luna selection; see `docs/M2_IMPLEMENTATION.md` for observed results and limits.
-
-A forgotten item can be restored from Luna's still-relevant context or from Memory/Journal asynchronously. It may arrive too late for the current Fast reply; system must not falsely guarantee zero-delay remembrance. Add cached memory retrieval to Fast only if it is demonstrably low-latency; otherwise keep it off critical path.
-
----
+Null/none preserves pending intent and deadline; cancel explicitly withdraws it.
+Speak supplies intent and a nonnegative delay from durable application, replacing
+pending work. Luna sees pending intent and new dialogue to reconsider relevance.
+No evidence, user anchor, semantic deduplication, TTL, cooldown or revision expiry.
+One active Fast stream, atomic consume-once, user priority, stream closure and
+shutdown/restart withdrawal remain technical responsibilities. Waiting intent may
+become stale until Luna cancels or replaces it; Runtime does not judge relevance.
+Autonomous-only tails do not trigger self-sustaining Luna calls.
 
 ## 10. Character identity, state and continuity
 
@@ -626,7 +573,7 @@ Only the immediate lane is latency-critical. Background work is bounded, priorit
 
 ### 13.2 Single writer and immutable snapshots
 
-SQLite writes use short transactions; state mutations run through one reducer/serialized commit path. Fast reads immutable snapshots without holding a lock across model inference. Luna proposals carry their base revision, and stale conflicting writes fail rather than clobber state.
+SQLite writes use short transactions; state mutations run through one reducer/serialized commit path. Fast reads immutable snapshots without holding a lock across model inference. The serialized Luna worker applies Markdown directly; Epoch ordering prevents history rewinds.
 
 ### 13.3 Input while Fast is streaming
 

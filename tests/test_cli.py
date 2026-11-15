@@ -29,11 +29,6 @@ class CLITests(unittest.IsolatedAsyncioTestCase):
         for invalid in (0, -1, True, 15840):
             with self.assertRaises(ValueError):
                 Config(working_context_tokens=invalid)
-        for changes in (dict(initiative_delay_seconds=True), dict(initiative_ttl_seconds=0),
-                        dict(initiative_delay_seconds=120), dict(initiative_cooldown_seconds=-1),
-                        dict(initiative_ttl_seconds=float('inf'))):
-            with self.assertRaises(ValueError):
-                Config(**changes)
 
     async def test_missing_omp_does_not_gate_fast(self):
         with tempfile.TemporaryDirectory() as folder:
