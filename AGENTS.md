@@ -59,7 +59,12 @@ M4.4 source Conversation Lab adds isolated simulation runs and read-only replay.
 Full long-provider acceptance is currently deferred by the user. See
 `docs/M4_4_CONVERSATION_LAB.md`; the old bundled executable predates M4.4.
 
-M4.5 makes Luna the cognitive owner: schema-v3 direct Markdown, summary and intent.
+M4.7 supersedes the M4.5 cognitive-director role: Bolt owns personality, preferences,
+speech and decisions; Luna organizes experience, memory, compaction and open threads.
+Fix Bolt behavioral regressions through separate fine-tuning, not corrective code
+or personality instructions. The older non-fine-tuned Bolt remains acceptable.
+Initiative is a legacy experimental capability, disabled and outside the M4.7 role
+contract. Schema-v3 direct Markdown, summary and legacy intent transport remain.
 Runtime checks technical budgets, ordering and atomic execution only. Budget-only
 Epoch fallback is temporary degradation with durable Luna recovery. No initiative
 TTL/cooldown, evidence or revision guards. Preserve old Lab archives read-only.

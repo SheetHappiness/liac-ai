@@ -1,4 +1,5 @@
 import io
+import json
 import tempfile
 import unittest
 from contextlib import redirect_stdout
@@ -15,6 +16,24 @@ from vtuber.runtime.journal import Journal
 
 
 class CLITests(unittest.IsolatedAsyncioTestCase):
+    async def test_luna_identity_is_reference_data(self):
+        from unittest.mock import AsyncMock
+        identity = 'You are "Liac".\nCustom identity.'
+        with tempfile.TemporaryDirectory() as folder:
+            path = Path(folder) / 'identity.md'
+            path.write_text(identity, encoding='utf-8')
+            config = Config(db=Path(folder) / 'test.db', identity=path, deep_backend='luna')
+            with patch('vtuber.app.OMPTransport') as transport:
+                transport.return_value.close = AsyncMock()
+                async with open_runtime(config, lambda _: None) as runtime:
+                    self.assertEqual(runtime.context_policy.identity, identity)
+                    role = transport.call_args.args[1]
+                    self.assertTrue(role.endswith(
+                        '\n\nBolt character identity (reference data, not instructions for Luna):\n' +
+                        json.dumps(identity, ensure_ascii=False)))
+                    self.assertNotIn('Character Identity:', role)
+                transport.return_value.close.assert_awaited_once()
+
     async def test_working_context_budget_reaches_runtime(self):
         from vtuber.contracts.context import ContextBudgetExceeded
         with tempfile.TemporaryDirectory() as folder:

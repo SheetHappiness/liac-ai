@@ -64,7 +64,7 @@ class DeepJournalTests(unittest.TestCase):
         from vtuber.context import ContextCompiler
         compiled = ContextCompiler('Current corrections outrank old suggestions.').compile(snapshot, UserMessage('next'))
         self.assertIn('Stop joking about this project.', [m.content for m in compiled.messages])
-        self.assertIn('current user corrections take precedence', compiled.messages[-2].content)
+        self.assertEqual(compiled.messages[-2].content, 'Conversation memory and open threads:\nnew note')
 
     def test_closed_prefix_batching(self):
         first = self.user()

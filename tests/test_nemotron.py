@@ -10,6 +10,11 @@ from vtuber.minds.nemotron import NemotronTokenCounter, render_nemotron
 
 
 class NemotronTests(unittest.TestCase):
+    def test_renderer_does_not_append_behavior_instructions(self):
+        self.assertEqual(
+            render_nemotron((ChatMessage('system', 'Identity'), ChatMessage('user', 'hi'))),
+            '<|turn>system\nIdentity<turn|>\n<|turn>user\nhi<turn|>\n<|turn>model\n')
+
     def test_required_input_and_exact_history_keep_whitespace_on_wire(self):
         prompt = render_nemotron((ChatMessage('system', 'Identity'),
             ChatMessage('user', '  earlier\t '), ChatMessage('assistant', '\n reply  '),
