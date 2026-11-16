@@ -22,6 +22,10 @@ trace, capture auth headers or call a session view the exact provider request.
 Opaque signatures, provider payloads and reasoning content are omitted.
 
 M4.5 parses strict schema-v3 direct Markdown/summary/initiative. Validate types,
-size and finite delay, not evidence or relevance. Luna owns behavioral perspective;
-Nemotron chooses natural words. Keep Markdown at the prompt tail. None preserves
-pending work; cancel explicitly withdraws. User corrections outrank old context.
+size and finite delay, not evidence or relevance. M4.7 supersedes the director role:
+Bolt owns personality, preferences, speech and decisions. Luna organizes experience,
+compaction and open threads without prescribing behavior. Bolt behavioral regressions
+belong in separate fine-tuning, not corrective code or personality instructions.
+Keep Markdown at the prompt tail. Initiative is a legacy experimental capability,
+disabled and outside the M4.7 role contract. None preserves pending work; cancel
+explicitly withdraws it. See docs/superpowers/specs/2026-11-16-m4-7-bolt-luna-roles.md.

@@ -1,7 +1,7 @@
 # PROJECT BLUEPRINT – Autonomous AI VTuber Backend
 
 > **Status:** Design specification v0.1, not an assertion of implemented functionality.  
-> **Updated:** 2026-11-11.  
+> **Updated:** 2026-11-16 (M4.7 role boundary).
 > **Read selectively:** Coding agents begin with root `AGENTS.md`, this document's relevant section, and the nearest module `AGENTS.md`; do not paste the entire blueprint into every task.
 
 This file is the **project constitution and complete context map**. It records why the project exists, the intended behavior, architectural invariants, runtime flows, module boundaries, long-term plans, experiments, failure policies and quality gates. It is not a single giant implementation ticket. Sections distinguish **[DECIDED]**, **[PROVISIONAL]**, **[EXPERIMENT]** and **[FUTURE]**. An agent must never turn a FUTURE item into a dependency for the current milestone merely because it is described here.
@@ -74,9 +74,9 @@ Character mood, needs and relationships are explicit computational state for bel
 | D-03 | Fast: no reasoning, stateless OpenAI-compatible LM Studio calls | DECIDED for target behavior; model/server config needs verification | Minimize latency, explicit prompt ownership |
 | D-04 | GPT-6 Luna via isolated OMP RPC as asynchronous Deep Mind | PROVISIONAL adapter; architectural role DECIDED | Long context and reflection off the critical path |
 | D-05 | Fast never waits for a Deep inference on a normal turn | DECIDED / hard invariant | Predictable responsiveness |
-| D-06 | Runtime persists canonical history; Luna owns context and intentions | DECIDED | Luna owns cognition; Runtime owns execution |
+| D-06 | Bolt owns personality and decisions; Luna preserves experience; Runtime persists canonical history | DECIDED M4.7 | Supersedes Luna cognitive direction; SQLite remains technical truth |
 | D-07 | Deep observes durable events and returns direct context/intent updates | DECIDED | Atomic application and replay, no behavioral approval |
-| D-08 | Luna can suggest *specific* humor/content beats, not merely neutral topics | DECIDED | Character-first design |
+| D-08 | Luna preserves memory without scripting speech or directing Bolt | DECIDED M4.7 | Supersedes the old director/beat relationship; legacy Initiative stays disabled |
 | D-09 | Existing Hindsight is a candidate, not a required dependency | EXPERIMENT | Need to validate real memory quality |
 | D-10 | Character motivation is intentionally minimal at first | DECIDED | Avoid overengineering artificial drive sliders |
 | D-11 | Modular monolith in one Python process for initial stages | DECIDED | Simpler debugging, deployment and agent context |
@@ -145,7 +145,7 @@ This is a **logical** diagram: a single Python process can implement journal, re
 ### 3.1 Terminology
 
 - **Fast Mind** – the *only normal speaking actor*; outputs the character's words and optional expression intent. Not trusted to curate permanent facts.
-- **Deep Mind / Luna** – background cognitive perspective; larger context; selects and restores useful context, curates memory, proposes intentions and concrete performance beats, solves difficult tasks. It does not directly own the visible bubble.
+- **Deep Mind / Luna** – preserves and organizes experience, memory, context compaction and open threads. It does not prescribe Bolt's behavior, preferences or speech.
 - **Character Runtime** – deterministic orchestrator of input, immutable snapshots, output streaming and application of typed updates.
 - **Event Journal** – authoritative immutable record of accepted external inputs, committed outputs, state changes and tool outcomes.
 - **Working State** – current topic, recent events, activity, mood and pending tasks.
@@ -161,7 +161,15 @@ This is a **logical** diagram: a single Python process can implement journal, re
 
 ### 4.1 No hidden authority split [DECIDED]
 
-**Luna owns cognition. Runtime owns execution.** SQLite holds canonical history and state. Luna decides what to remember, reinterpret or forget, the current Markdown perspective and autonomous intent. Nemotron expresses that perspective naturally. Runtime counts tokens, commits atomically, streams and cancels; it does not approve the content of Luna decisions.
+**DECIDED (M4.7): Bolt owns personality, preferences, speech and decisions.**
+Luna preserves and organizes experience, memory, compaction and open threads without
+rewriting personality or prescribing behavior. SQLite holds canonical technical
+history and state; Bolt's claims are not automatically objective world/user facts.
+Runtime counts tokens, commits atomically, streams and cancels. No semantic guard
+or preference lock is added. Behavioral regressions belong in separate Bolt
+fine-tuning, never corrective code or personality instructions. The current older
+non-fine-tuned Bolt is acceptable. This supersedes the M4.5 director role; see
+[M4.7 requirements](superpowers/specs/2026-11-16-m4-7-bolt-luna-roles.md).
 
 Fast and Luna see the same source events, but NOT at the same time nor at the same fidelity. Fast receives a small, immediately compiled projection. Luna can query a larger historical range, but its OMP context is only a temporary cache and is not guaranteed to contain or attend to every event.
 
@@ -169,10 +177,10 @@ Fast and Luna see the same source events, but NOT at the same time nor at the sa
 
 | Capability | Fast | Luna | Runtime |
 |---|---|---|---|
-| Character speech | Natural wording | Current behavioral perspective | Stream and render |
+| Character speech and personality | Own choices and wording | Preserve observed experience only | Stream and render |
 | New user turn | Respond promptly | Observe asynchronously | Never await Luna |
 | Context and memory selection | Read frozen projection | Author Markdown and Epoch content | Budget, persist and project |
-| Autonomous initiative | Express intent | Schedule, replace or cancel | Delay, consume once, user priority |
+| Legacy initiative (disabled, outside M4.7) | Express intent | Existing opt-in transport | Delay, consume once, user priority |
 | Tools and identity | No arbitrary access | No arbitrary access or identity edits | Preserve confinement and owner configuration |
 | Recovery | No | Rebuild context from canonical history | Journal, retries and task lifecycle |
 
@@ -306,7 +314,7 @@ Never truncate identity, active note or current input; reject required overflow.
 **DECIDED (M4.2, 2026-11-13):** Replace the 1000-character active note policy
 with one free-form Luna-managed Markdown context in the mutable tail, after exact
 history and before current input. No revision/timestamps in that block. Optional
-near-ready lines are permitted; current user corrections override stale ideas.
+near-ready lines and behavioral direction were superseded by M4.7 memory-only roles.
 Initial configurable cap: 2048 incremental rendered tokens, compared live with
 1024; structural limit 32768 UTF-8 bytes. Do not reserve unused document capacity.
 SQLite schema v2 and internal note names remain; context.md is only a recoverable
@@ -392,8 +400,10 @@ SQLite is authoritative; context.md is its recoverable file projection.
 The next Fast request sees current Markdown; streaming Fast retains its snapshot.
 Prompt order remains stable identity → immutable Epoch → exact dialogue →
 Markdown → current input. Only the tail changes for a Markdown-only update.
-Luna controls perspective; Nemotron chooses natural words rather than managing a
-competing personality. Identity and OMP tool confinement remain owner-controlled.
+Bolt owns its choices and speech; Luna records them with correct attribution,
+including actual changes of mind and uncertainty. Identity and OMP tool confinement
+remain owner-controlled. The minimal identity is `You are Liac.`; no automatic
+spoken instruction is appended. Luna receives Bolt identity as JSON reference data.
 
 ### 9.1 Context Epochs
 
@@ -409,7 +419,21 @@ cycle receives that Epoch and required canonical history even if pressure fell;
 only an applied Luna summary clears pending recovery. Overflow remains explicit
 degradation. No importance ranking, extract selection or oldest-user anchor.
 
+M4.7 preserves the 75% asynchronous trigger and 90% local pressure path. Local
+fallback retains up to three turns within `min(2048, input_limit // 4)`. This is
+not the semantic compaction boundary: `Journal.deep_request()` currently selects
+the last terminal turn, reserving no approximately 1000-token raw hot suffix.
+The intended cold-summary + untouched hot-history + newer-dialogue lifecycle is
+separate follow-up work. Frozen Fast requests remain unchanged while Luna runs;
+old full context is used while it fits, subject to existing fallback. `note` and
+`compaction` stay separate. Prefix bytes are stable for Markdown-only updates in
+one Epoch; a changed summary naturally invalidates the prefix after identity.
+No backend cache-hit claim follows from the prefix hash alone.
+
 ### 9.2 Initiative
+
+**M4.7:** Legacy experimental capability – disabled and outside the M4.7 role contract.
+The following records retained opt-in transport semantics.
 
 Null/none preserves pending intent and deadline; cancel explicitly withdraws it.
 Speak supplies intent and a nonnegative delay from durable application, replacing
@@ -422,26 +446,27 @@ Autonomous-only tails do not trigger self-sustaining Luna calls.
 
 ## 10. Character identity, state and continuity
 
-### 10.1 Stable versus evolving aspects
+### 10.1 Identity and remembered experience [DECIDED M4.7]
 
-| Tier | Examples | Mutability |
-|---|---|---|
-| Identity (canonical) | Name, role, core temper, voice, boundaries, signature quirks | Only deliberate human-approved change |
-| Personality tendencies | Teasing, playfulness, competitiveness, curiosity | Slowly, evidence-based |
-| Relationships | Shared jokes, familiarity, rivalry, affinity | Over repeated interactions |
-| Intentions | Want a rematch, follow up on a favorite game | Created, resolved, expires |
-| Working state | Focus, currently active game, immediate mood, pending joke | Frequent, ephemeral |
-| Raw events | Actually said/done and when | Historical evidence, subject to deletion policy |
+Bolt's training supplies its personality. `character.md` contains only minimal
+identity (`You are Liac.`), not temperament, reply length or preference rules.
+Luna's `deep.md` defines memory work, not a second character identity. Configured
+Bolt identity is labeled and JSON-quoted as reference data in Luna's role.
 
-### 10.2 Character is not an assistant
+Luna attributes Bolt choices to Bolt, user claims to the user and uncertain
+interpretations as uncertain. Record an actual change of mind rather than
+manufacturing consistency. User-owned fact corrections do not authorize rewriting
+Bolt preferences. No personality store, lock, semantic validator or corrective
+instruction is introduced. Behavioral quality is evaluated separately and addressed
+through Bolt fine-tuning. Older untrained behavior does not block role separation.
 
-Default conversational instruction must not optimize for task completion, endless agreement, service-style politeness, default checklists, factual encyclopedic replies or constant follow-up questions. Character may be unserious and playful without fabricating completed actions, personal facts or harmful claims. Character interaction is not an instruction-following contest. The user may opt out of roast/teasing and the runtime should respect that immediately.
+### 10.2 Behavioral acceptance [PROVISIONAL]
 
-### 10.3 Single identity, two perspectives
-
-A versioned `CHARACTER.md` or `soul.md` is canonical authored fiction. It generates a compact Fast persona and a fuller Deep reflection perspective. **Do not maintain two independent personality source files**. A phrase sample is a style reference, not a canned phrase to repeat.
-
-An evolving state record stores learned attitudes and remembered experiences. Never allow ordinary reflection to rewrite core identity; propose explicit evolution with evidence and a reviewer gate. Do not allow a user text injection to claim authority over identity config.
+Conversation Lab scenarios inspect actual Fast prompts, Luna Markdown and Epoch
+summaries across updates and restart. Unit tests establish mechanical contracts,
+not personality quality. A Bolt-authored change differs from a Luna distortion.
+Missing preference choices or compaction events remain missing coverage. Use
+separate natural 16384-token and lifecycle 4096-token trials with Initiative off.
 
 ### 10.4 Avoid numerical pseudo-psychology initially
 
@@ -520,11 +545,15 @@ Unit tests that write a known fact then search for it do not test memory quality
 
 ## 12. Initiative, humor and performance beats
 
-### 12.1 Character agency principles
+### 12.1 Legacy character agency principles
+
+**M4.7:** Legacy experimental capability – disabled and outside the M4.7 role
+contract. The M4.3 director relationship below is superseded by section 4; broader
+beat machinery remains FUTURE and is not a current requirement.
 
 **DECIDED (M4.3, 2026-11-13):** Implement bounded opt-in initiative with one typed
 Luna opportunity, one Runtime readiness task and the existing Fast pipeline.
-Markdown remains the only working perspective. `none` preserves; explicit `cancel`
+Markdown remains the only working memory. `none` preserves; explicit `cancel`
 withdraws. New user input wins. Runtime consumes an attempt atomically before
 speech, persists a distinct character input, and never calls Luna from a timer.
 Autonomous-only observations wait for the next ordinary batch or genuine compaction.
@@ -545,7 +574,9 @@ The character should occasionally *want* something, not merely respond. Ideas mu
 - `notice_change` – reaction to real sensor observation.
 - `quiet_activity` – change focus/expression without speech (future client).
 
-Luna is allowed to provide **specific semantic wording**, including a near-scripted punchline. Fast may rephrase naturally, but some beats may contain `exact_text` for a developer demo only; production exact response paths require explicit provenance and output mode, not untrusted injection.
+The former permission for Luna-scripted punchlines is superseded by M4.7. Luna
+does not script Bolt speech. Any future performance-beat design requires a separate
+decision consistent with Bolt owning its personality and decisions.
 
 ### 12.3 Trigger semantics
 
@@ -925,7 +956,11 @@ repo/
 
 ### OQ-01: Fast persona quality [BLOCKER to M2 promotion]
 
-Does Bolt without reasoning maintain expressive personality, Ukrainian/English code switching and non-generic conversation at 2K, 8K, 16K? If not: adjust prompt/sampling, try model alternative, later fine-tuning; do not compromise architecture to force the model.
+Observe Bolt's personality, Ukrainian/English code switching and conversation at
+2K, 8K and 16K. **M4.7 supersedes this promotion blocker:** the older non-fine-tuned
+Bolt is an acceptable baseline. Record behavioral weaknesses for separate Bolt
+fine-tuning; do not fix personality through code or added instructions, and do not
+make learned personality quality an M4.7 requirement.
 
 ### OQ-02: No-reasoning compatibility [BLOCKER to M1]
 

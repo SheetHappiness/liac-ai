@@ -1,6 +1,6 @@
 # Runtime
 
-Luna owns cognition; Runtime owns execution. Keep one serialized Deep worker,
+Bolt owns personality and decisions; Luna preserves experience; Runtime owns execution. Keep one serialized Deep worker,
 short atomic state/result/cursor transactions and frozen Fast snapshots. No
 transaction spans inference. Technical failures preserve the cursor; audit-only
 and autonomous-only tails cannot create inference loops.
@@ -13,7 +13,8 @@ Epochs retain complete-turn boundaries, local budgets and monotonic cutoffs.
 Budget-only fallback is explicitly degraded, preserving canonical history and
 pending Luna recovery even after pressure falls or the process restarts.
 
-Initiative is one pending intent: none preserves, speak replaces, cancel withdraws.
+Initiative is a legacy experimental capability, disabled and outside the M4.7 role
+contract. The opt-in transport remains one pending intent: none preserves, speak replaces, cancel withdraws.
 Keep delay, consume-once, input locking, user priority and owned-task cancellation.
 No relevance guards, TTL, cooldown or revision expiry. Restart cancels pending work
 and unfinished inputs. Trace failures cannot affect domain work. Keep provider

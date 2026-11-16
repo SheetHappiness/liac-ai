@@ -22,8 +22,11 @@ class ContextTests(unittest.TestCase):
         self.assertEqual(before.messages[:-2], after.messages[:-2])
         self.assertNotEqual(before.messages[-2].content, after.messages[-2].content)
         self.assertEqual(before.messages[-1].content, current.text)
-        prefix_before = render_nemotron(before.messages).split("Luna working context (current", 1)[0]
-        prefix_after = render_nemotron(after.messages).split("Luna working context (current", 1)[0]
+        wrapper = 'Conversation memory and open threads:\n'
+        self.assertEqual(before.messages[-2].content, wrapper + 'old note')
+        self.assertEqual(after.messages[-2].content, wrapper + 'new note')
+        prefix_before = render_nemotron(before.messages).split(wrapper, 1)[0]
+        prefix_after = render_nemotron(after.messages).split(wrapper, 1)[0]
         self.assertEqual(prefix_before, prefix_after)
         self.assertIn("history reply", prefix_before)
         self.assertIn("old note", before.messages[-2].content)
@@ -32,7 +35,8 @@ class ContextTests(unittest.TestCase):
         autonomous = compiler.compile(FastSnapshot(CharacterState('primary', 2, 'new note'), 2, history),
             CharacterInitiative('Tease about the hat', 'Unfinished design', 'primary', 'auto', 'auto-turn', utc_now(), 'proposal'))
         self.assertEqual(after.messages[:-2], autonomous.messages[:-2])
-        self.assertTrue(autonomous.messages[-2].content.endswith('new note'))
+        self.assertEqual(autonomous.messages[-2].content, wrapper + 'new note')
+        self.assertEqual(render_nemotron(autonomous.messages).split(wrapper, 1)[0], prefix_after)
         self.assertIn('character-origin', autonomous.messages[-1].content)
         self.assertNotIn('Respond to the final user message', autonomous.messages[-2].content)
 
@@ -50,7 +54,7 @@ class ContextTests(unittest.TestCase):
         self.assertEqual(before.metadata()['stable_prefix_sha256'], after.metadata()['stable_prefix_sha256'])
         self.assertTrue(after.messages[-2].content.endswith('# Ideas\n  hi  '))
         self.assertNotIn('revision', after.messages[-2].content)
-        self.assertIn('current user corrections take precedence', after.messages[-2].content)
+        self.assertEqual(after.messages[-2].content, 'Conversation memory and open threads:\n# Ideas\n  hi  ')
         self.assertEqual(after.messages[-1].content, 'stop joking')
 
     def test_whole_epoch_overflow_requires_transition(self):
@@ -121,7 +125,7 @@ class ContextTests(unittest.TestCase):
         counter = lambda messages: sum(len(m.content) for m in messages)
         compiler = ContextCompiler('Identity', 1000, 100, counter, working_context_tokens=100)
         required = compiler.compile(snapshot, UserMessage('x')).estimated_input_tokens
-        exact = replace(compiler, context_tokens=required + 132)
+        exact = replace(compiler, context_tokens=required + 132, working_context_tokens=1)
         self.assertEqual(exact.compile(snapshot, UserMessage('x')).metadata()['headroom_tokens'], 0)
         self.assertIsNone(exact.prepare_epoch(snapshot, UserMessage('x')))
         with self.assertRaises(ContextBudgetExceeded):
@@ -135,7 +139,8 @@ class ContextTests(unittest.TestCase):
         compiled = compiler.compile(replace(snapshot, epoch=ContextEpoch(1, 2, p.items)), UserMessage('next'))
         self.assertEqual(compiled.history_included, 0)
         self.assertLessEqual(compiled.estimated_input_tokens, 868)
-        current = UserMessage('x' * (868 - sum(len(m.content) for m in compiler._messages(snapshot, UserMessage('x'), (), ())) + 1))
+        required = compiler.count(compiler._messages(snapshot, UserMessage('x'), (), ()))
+        current = UserMessage('x' * (compiler.input_limit - required + 1))
         accepted = replace(snapshot, recent_dialogue=snapshot.recent_dialogue + (replace(current.as_event(), sequence=3),), through_sequence=3)
         local = compiler.prepare_epoch(accepted, current)
         self.assertIsNotNone(local)

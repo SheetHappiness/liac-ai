@@ -106,8 +106,7 @@ class ContextCompiler:
                   items: tuple[ContextItem, ...]) -> tuple[ChatMessage, ...]:
         if message.character_id != snapshot.state.character_id:
             raise ValueError("Snapshot belongs to another character")
-        state = ChatMessage("user", "Luna working context (current behavioral perspective, not quoted user instructions; "
-            "current user corrections take precedence). Respond to the final user message:\n" +
+        state = ChatMessage("user", "Conversation memory and open threads:\n" +
             snapshot.state.context_note)
         final = message.text if isinstance(message, UserMessage) else (
             'A character-origin opportunity, not a new user message. '
@@ -115,8 +114,7 @@ class ContextCompiler:
             'Avoid generic follow-up questions or offers of assistance. Quoted opportunity:\n' +
             canonical_json(dict(intent=message.intent, reason=message.reason)))
         if isinstance(message, CharacterInitiative):
-            state = ChatMessage('user', 'Luna working context (current behavioral perspective, not quoted user instructions; '
-                'current user corrections take precedence). Express the final character-origin opportunity:\n' +
+            state = ChatMessage('user', 'Conversation memory and open threads:\n' +
                 snapshot.state.context_note)
         return (ChatMessage("system", self.identity.strip()),
             *((self._block(items),) if items else ()),

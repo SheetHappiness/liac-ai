@@ -5,6 +5,18 @@ working context through the asynchronous M2 pipeline. M2 connects Luna through O
 an asynchronous Deep Mind alongside local Nemotron. Durable context epochs,
 exact local token budgeting and deterministic offline fallback remain from M1.5.
 
+## M4.7: Bolt and Luna roles
+
+Bolt is the source of truth for its personality, preferences, speech and decisions.
+Luna preserves and organizes experience, memory, compaction and open threads;
+it does not direct Bolt or rewrite its personality. SQLite remains the authoritative
+technical record. Bolt's statements do not automatically establish world/user facts.
+The minimal identity is `You are Liac.`; the renderer adds no behavioral instruction.
+Luna receives configured Bolt identity as JSON reference data. Behavioral regressions
+belong in separate Bolt fine-tuning; the current older checkpoint is acceptable.
+See [role specification](docs/superpowers/specs/2026-11-16-m4-7-bolt-luna-roles.md)
+and [verification report](docs/M4_7_BOLT_LUNA_ROLES.md).
+
 ## Run
 
 Python 3.12+ and HTTPX. From the repository root in PowerShell:
@@ -131,13 +143,14 @@ with cancellation. Optional GPT-6 Luna/OMP is available in M2 below.
 
 ## Luna-managed Markdown context (M4.2)
 
-Luna replaces one free-form Markdown document asynchronously. Suggested Threads
-and almost-ready lines are optional; Fast chooses how to use them. Current user
-corrections take precedence over older ideas, including delayed updates. Revision
-and epoch conflicts still reject; an ordinary newer input alone does not.
+Luna replaces one free-form Markdown document asynchronously, preserving observed
+experience and open threads. M4.7 supersedes the former near-scripted lines and
+blanket user-correction priority: attribute Bolt choices and user claims separately,
+and record actual changes of mind. M4.5 supersedes old semantic/revision approval;
+Runtime applies only technical checks and ordering, as described below.
 
 `--working-context-tokens 2048` is the initial configurable cap; use `1024` for a
-smaller working perspective. Only the document's actual rendered cost consumes
+smaller working memory. Only the document's actual rendered cost consumes
 Fast's allowance, with no preallocated reserve. New proposals are locally counted
 before the atomic SQLite batch commits. A separate 32768-byte UTF-8 ceiling bounds
 transport/storage. Lowering the cap preserves existing stored content; required
@@ -219,7 +232,10 @@ disk failure/limit stops capture visibly without deleting data or stopping chat.
 Trace persistence happens at request boundaries, not on every token. See
 [desktop implementation and verification](docs/DESKTOP_INSPECTOR.md).
 
-## Optional character initiative (M4.3)
+## Legacy optional character initiative (M4.3)
+
+**M4.7:** Legacy experimental capability – disabled and outside the M4.7 role
+contract. The following describes the historical opt-in path, not Luna's memory-only role. M4.5 below supersedes its old timing and guard semantics.
 
 Autonomous speech is off by default. To let Luna occasionally propose a relevant
 line which Nemotron delivers through the ordinary Fast stream:
@@ -234,7 +250,7 @@ Delay/TTL run from Luna request capture, so inference time counts toward both.
 Luna may provide proposal-specific delay/TTL. Require finite `0 <= delay < TTL`
 and nonnegative cooldown. Tune conversational rhythm from actual dialogue.
 
-Markdown remains the sole free-form working perspective. A separate bounded
+Markdown remains the sole free-form working memory. A separate bounded
 `speak` proposal carries intent, reason and canonical evidence. `none` preserves
 a pending intent; explicit `cancel` withdraws it. Runtime never interrupts Fast,
 gives new user input priority, and permits one attempt per real user anchor.
@@ -293,3 +309,14 @@ longer imposes TTL, cooldown, evidence or relevance guards. Luna sees pending wo
 to reconsider it; a topic change alone may leave intent stale until that analysis.
 Old archived timing options are ignored on resume. New results use `deep.applied`;
 M4.4 traces remain readable. See [implementation](docs/M4_5_RUNTIME_SIMPLIFICATION.md).
+
+
+M4.7 preserves identity → Epoch summary → growing raw history → Markdown → final
+input. Markdown-only updates preserve rendered prefix bytes within an Epoch; a
+changed summary invalidates the prefix after identity. This does not measure
+backend cache hits. Luna's `note` and `compaction` remain separate; active Fast
+requests retain frozen snapshots. Existing 75% async and 90% local pressure paths
+remain. Local fallback retains up to three turns within `min(2048, input_limit // 4)`.
+Normal semantic compaction currently cuts through the last terminal turn: retaining
+approximately 1000 raw hot tokens while Luna summarizes only cold history is a
+separate Context Lifecycle follow-up, not implemented by M4.7.
