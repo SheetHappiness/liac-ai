@@ -79,6 +79,14 @@ class ArchiveTests(unittest.IsolatedAsyncioTestCase):
 
 
 class SimulationTests(unittest.IsolatedAsyncioTestCase):
+    async def test_role_scenario_loads_from_path(self):
+        from vtuber.lab.__main__ import scenario
+        path = Path(__file__).resolve().parents[1] / 'src/vtuber/lab/scenarios/bolt-luna-roles.json'
+        loaded = scenario(str(path))
+        self.assertEqual(loaded['id'], 'bolt-luna-roles')
+        self.assertEqual(len(loaded['sessions']), 5)
+        self.assertTrue(all(session['events'] for session in loaded['sessions']))
+
     async def test_failed_simulator_setup_closes_owned_runtime(self):
         from vtuber.lab.host import LabHost
         with tempfile.TemporaryDirectory() as folder:

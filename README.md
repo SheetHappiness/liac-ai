@@ -143,10 +143,11 @@ with cancellation. Optional GPT-6 Luna/OMP is available in M2 below.
 
 ## Luna-managed Markdown context (M4.2)
 
-Luna replaces one free-form Markdown document asynchronously. Suggested Threads
-and almost-ready lines are optional; Fast chooses how to use them. Current user
-corrections take precedence over older ideas, including delayed updates. Revision
-and epoch conflicts still reject; an ordinary newer input alone does not.
+Luna replaces one free-form Markdown document asynchronously, preserving observed
+experience and open threads. M4.7 supersedes the former near-scripted lines and
+blanket user-correction priority: attribute Bolt choices and user claims separately,
+and record actual changes of mind. M4.5 supersedes old semantic/revision approval;
+Runtime applies only technical checks and ordering, as described below.
 
 `--working-context-tokens 2048` is the initial configurable cap; use `1024` for a
 smaller working memory. Only the document's actual rendered cost consumes

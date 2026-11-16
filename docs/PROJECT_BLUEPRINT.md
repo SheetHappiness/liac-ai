@@ -956,7 +956,11 @@ repo/
 
 ### OQ-01: Fast persona quality [BLOCKER to M2 promotion]
 
-Does Bolt without reasoning maintain expressive personality, Ukrainian/English code switching and non-generic conversation at 2K, 8K, 16K? If not: adjust prompt/sampling, try model alternative, later fine-tuning; do not compromise architecture to force the model.
+Observe Bolt's personality, Ukrainian/English code switching and conversation at
+2K, 8K and 16K. **M4.7 supersedes this promotion blocker:** the older non-fine-tuned
+Bolt is an acceptable baseline. Record behavioral weaknesses for separate Bolt
+fine-tuning; do not fix personality through code or added instructions, and do not
+make learned personality quality an M4.7 requirement.
 
 ### OQ-02: No-reasoning compatibility [BLOCKER to M1]
 
