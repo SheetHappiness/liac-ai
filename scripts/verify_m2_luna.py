@@ -28,6 +28,15 @@ def self_check():
     from vtuber.contracts.events import CharacterInitiative
     sample = CharacterInitiative('hat', 'unfinished', 'primary', 'i', 't', 'now', 'p')
     assert sample.as_event().kind == 'character.initiative.started'
+    check_cold({'history': ['cold', 'hot'], 'new': ['new hot'],
+                'compaction': {'through': {'history': 1, 'new': 0}}}, ['cold'])
+    try:
+        check_cold({'history': ['cold', 'hot'], 'new': [],
+                    'compaction': {'through': {'history': 2, 'new': 0}}}, ['cold'])
+    except AssertionError:
+        pass
+    else:
+        raise AssertionError('Hot contamination was not detected')
     print('measurement self-check PASS')
 
 
@@ -463,6 +472,178 @@ async def initiative(evidence):
             deep_calls=observed.calls, generation=dict(runtime.fast_diagnostics.get('generation', {})))
 
 
+def check_cold(payload, expected):
+    counts = payload['compaction']['through']
+    assert payload['history'][:counts['history']] + payload['new'][:counts['new']] == expected
+
+
+async def context_handoff(evidence):
+    from hashlib import sha256
+    from vtuber.minds.luna import render_request
+
+    traces = []
+    def trace(kind, request_id, data):
+        traces.append((kind, request_id, data))
+        with (evidence.folder/'handoff-traces.jsonl').open('a', encoding='utf-8') as stream:
+            stream.write(json.dumps(dict(kind=kind, request_id=request_id, data=data), ensure_ascii=False)+'\n')
+
+    class HeldLuna:
+        def __init__(self, mind):
+            self.mind = mind
+            self.arm()
+
+        def arm(self):
+            self.entered, self.release = asyncio.Event(), asyncio.Event()
+            self.request = None
+
+        async def propose(self, request):
+            hold = request.compaction is not None and self.request is None
+            if hold:
+                self.request = request
+                self.entered.set()
+            result = await self.mind.propose(request)
+            if hold:
+                await self.release.wait()
+            return result
+
+    config = evidence.config('handoff', context_tokens=4096, initiative_enabled=False)
+    send_count = 0
+    async def send(runtime, text, **tags):
+        nonlocal send_count
+        send_count += 1
+        assert send_count <= 18, 'Controlled limit reached (18 handoff turns plus two cache turns)'
+        return await evidence.send(runtime, text, **tags)
+
+    async with open_runtime(config, evidence.output, trace=trace) as runtime:
+        worker = runtime._deep_worker
+        held = HeldLuna(worker.mind)
+        worker.mind = held
+        compiler = runtime.context_policy
+        for index in range(14):
+            text = ('Fictional archive fact: our bridge is named Marigold and our stone is jade. '
+                if index == 0 else f'Fictional expedition journal entry {index}. ')
+            text += ('The expedition walks beside a quiet river, sketches the hills, records the weather, '
+                'and checks the wooden shelter before sunset. ')*8
+            text += '\nRecent marker: the lantern is violet. Acknowledge briefly.'
+            _, terminal_sequence, _ = await send(runtime, text, stage='prepare', index=index)
+            await until(lambda: held.entered.is_set() or runtime.journal.cursor('primary') >= terminal_sequence
+                        or runtime.deep_error is not None)
+            assert runtime.deep_error is None, runtime.deep_error
+            if held.entered.is_set():
+                break
+        await asyncio.wait_for(held.entered.wait(), 85)
+        request = held.request
+        assert request.recovery_epoch is None, 'Normal compaction must precede emergency fallback'
+        hot = tuple(e for e in request.snapshot.recent_dialogue if e.sequence > request.compaction.cutoff)
+        probe = UserMessage('Budget probe')
+        cost = compiler.count(compiler._messages(request.snapshot, probe, hot, request.snapshot.epoch.items)) - compiler.count(
+            compiler._messages(request.snapshot, probe, (), request.snapshot.epoch.items))
+        assert hot and cost >= 1024, cost
+        payload = json.loads(render_request(request))
+        all_events = {e.event_id: e for e in (*request.snapshot.recent_dialogue, *request.compaction.events, *request.events)}
+        expected = [{'speaker': 'user' if e.kind == 'user.message.completed' else 'liac',
+                     'text': e.payload['text'], 'occurred_at': e.occurred_at}
+            for e in sorted(all_events.values(), key=lambda e: e.sequence)
+            if e.sequence <= request.compaction.cutoff and e.kind in ('user.message.completed', 'character.reply.completed')]
+        check_cold(payload, expected)
+        base_epoch = runtime.journal.context_epoch('primary')
+        await send(runtime, 'New Hot fact: our ticket code is VIOLET-27. Say it once briefly.', stage='while-luna-held')
+        assert not held.release.is_set()
+        assert runtime.journal.context_epoch('primary') == base_epoch, 'Normal handoff unexpectedly used fallback'
+        held.release.set()
+        await until(lambda: runtime.journal.get('deep_'+request.request_id) is not None)
+        application = runtime.journal.get('deep_'+request.request_id).payload['application']
+        assert application['epoch'] == 'changed', application
+        snapshot = runtime.journal.fast_snapshot('primary')
+        by_id = {e.event_id: e for e in snapshot.recent_dialogue}
+        assert all(by_id[e.event_id].payload['text'].encode('utf-8') == e.payload['text'].encode('utf-8') for e in hot)
+        evidence.save('handoff_normal', cutoff=request.compaction.cutoff, hot_tokens=cost,
+            hot_ids=[e.event_id for e in hot], hot_sha256=sha256(json.dumps([e.payload['text'] for e in hot]).encode()).hexdigest(),
+            hot_unchanged=True, epoch=asdict(snapshot.epoch), through=payload['compaction']['through'])
+        await send(runtime, 'What is our ticket code? Brief answer.', stage='next-fast-prompt')
+
+        # The fallback case uses a deliberate delivery hold, separate from normal handoff.
+        await until(lambda: runtime.deep_diagnostics.get('lifecycle') == 'ready')
+        if compiler.semantic_cutoff(runtime.journal.fast_snapshot('primary')) is None:
+            _, terminal_sequence, _ = await send(runtime,
+                'The expedition pauses to inspect a new map and count its supplies. '*8 +
+                'The ticket remains VIOLET-27. Acknowledge briefly.', stage='prepare-fallback')
+            await until(lambda: runtime.journal.cursor('primary') >= terminal_sequence or runtime.deep_error is not None)
+            assert runtime.deep_error is None, runtime.deep_error
+        assert compiler.semantic_cutoff(runtime.journal.fast_snapshot('primary')) is not None
+        held.arm()
+        worker.notify(compact=True)
+        await asyncio.wait_for(held.entered.wait(), 85)
+        late = held.request
+        overflow = 'New event: the compass is copper. Acknowledge briefly. '
+        current = runtime.journal.fast_snapshot('primary')
+        while compiler.input_tokens(current, UserMessage(overflow)) <= compiler.input_limit:
+            overflow += 'rain cloud ridge stream '*10
+        assert compiler.count(compiler._messages(current, UserMessage(overflow), (), ())) <= compiler.input_limit
+        await send(runtime, overflow, stage='overflow-while-luna-held')
+        fallback = runtime.journal.context_epoch('primary')
+        assert runtime.journal.epoch_recovery('primary')['recovery_pending']
+        assert fallback.compacted_through_sequence > late.compaction.cutoff
+        held.release.set()
+        await until(lambda: not runtime.journal.epoch_recovery('primary')['recovery_pending'])
+        late_application = runtime.journal.get('deep_'+late.request_id).payload['application']
+        assert late_application['epoch'] == 'superseded', late_application
+        evidence.save('handoff_fallback', mode='budget_only', injected_hold=True,
+            fallback=asdict(fallback), late_application=late_application,
+            recovered=asdict(runtime.journal.context_epoch('primary')))
+        persisted = runtime.journal.fast_snapshot('primary')
+
+    async with open_runtime(config, evidence.output, trace=trace) as runtime:
+        restarted = runtime.journal.fast_snapshot('primary')
+        assert restarted.epoch == persisted.epoch
+        assert [(e.event_id, e.payload['text'].encode()) for e in restarted.recent_dialogue] == [
+            (e.event_id, e.payload['text'].encode()) for e in persisted.recent_dialogue]
+        answer, _, _ = await send(runtime,
+            'Recall the bridge name, stone, ticket code, and compass material from our expedition. Briefly.', stage='restart-recall')
+        evidence.save('handoff_restart', summary_and_raw_equal=True, answer=answer,
+            expected=dict(bridge='Marigold', stone='jade', ticket='VIOLET-27', compass='copper'))
+
+    await handoff_cache(evidence)
+
+
+async def handoff_cache(evidence):
+    from vtuber.app import http_client
+    from vtuber.minds.nemotron import render_nemotron
+    from verify_m1_5_context import Evidence as CacheEvidence, raw_call
+
+    # A fresh 16k configuration with short real dialogue, never synthetic filling.
+    async with open_runtime(evidence.config('short-cache', context_tokens=16384), evidence.output) as runtime:
+        await evidence.send(runtime, 'A tiny garden has a blue gate. Name one flower in a short sentence.', stage='short-16k')
+        await evidence.send(runtime, 'The gate is now green. Acknowledge briefly.', stage='short-16k')
+        await until(lambda: runtime.deep_diagnostics.get('lifecycle') == 'ready')
+        compiler = runtime.context_policy
+        snapshot = runtime.journal.fast_snapshot('primary')
+        current = UserMessage('Say READY.')
+        before = compiler.compile(snapshot, current)
+        after = compiler.compile(replace(snapshot, state=replace(snapshot.state,
+            context_note=snapshot.state.context_note+'\nThe gate is green.')), current)
+        wrapper = 'Conversation memory and open threads:\n'
+        assert render_nemotron(before.messages).rsplit(wrapper, 1)[0].encode() == render_nemotron(after.messages).rsplit(wrapper, 1)[0].encode()
+    cache = CacheEvidence(evidence.args)
+    import os
+    import shutil
+    import subprocess
+    with cache.log.open('wb') as log:
+        process = subprocess.Popen([shutil.which('lms'), 'log', 'stream', '--source', 'runtime', '--json'],
+            stdout=log, stderr=subprocess.STDOUT,
+            **({'creationflags': subprocess.CREATE_NO_WINDOW} if os.name == 'nt' else {}))
+        try:
+            await asyncio.sleep(.5)
+            async with http_client(cache.settings) as client:
+                prime = await raw_call(client, cache, before.messages)
+                changed = await raw_call(client, cache, after.messages)
+        finally:
+            process.terminate()
+            process.wait(timeout=10)
+    evidence.save('handoff_cache_16k', context_tokens=16384, history_messages=before.history_included,
+        stable_prefix_unchanged=True, prime=prime, changed=changed)
+
+
 async def main(args):
     evidence=Evidence(args)
     if args.phase in ('all','long'):await long_conversation(evidence)
@@ -470,6 +651,9 @@ async def main(args):
     if args.phase == 'markdown':await markdown_context(evidence)
     if args.phase == 'initiative':await initiative(evidence)
     if args.phase == 'offline':await offline(evidence)
+    if args.phase == 'handoff':
+        async with asyncio.timeout(600):
+            await context_handoff(evidence)
     if args.phase in ('all','cli'):await cli(evidence)
 
 
@@ -482,7 +666,7 @@ if __name__=='__main__':
     parser.add_argument('--omp-executable',default='omp')
     parser.add_argument('--luna-model',default='openai-codex/gpt-6-luna')
     parser.add_argument('--output',type=Path,default=Path('.data/m2-results.jsonl'))
-    parser.add_argument('--phase',choices=('all','long','scenarios','offline','cli','markdown','initiative'),default='all')
+    parser.add_argument('--phase',choices=('all','long','scenarios','offline','cli','markdown','initiative','handoff'),default='all')
     parser.add_argument('--trials',type=int,default=3)
     arguments=parser.parse_args()
     if arguments.self_check:self_check()
