@@ -64,6 +64,15 @@ class PerceptionBusTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual([p.perception_id for p in batch.items], ['chat', 'live', 'later-chat'])
         self.assertEqual(batch.closed_by, 'quiet')
 
+    async def test_mixed_gap_never_lengthens_in_either_order(self):
+        for kinds in [('chat', 'observation'), ('observation', 'chat')]:
+            with self.subTest(kinds=kinds):
+                bus = PerceptionBus(text_gap=.02, live_gap=1)
+                for i, kind in enumerate(kinds):
+                    await bus.publish(perception(str(i), kind=kind))
+                batch = await asyncio.wait_for(bus.drain(), .3)
+                self.assertEqual(len(batch.items), 2)
+
     async def test_idle_backlog_does_not_wait_extra_gap(self):
         bus = PerceptionBus(text_gap=.08)
         await bus.publish(perception())

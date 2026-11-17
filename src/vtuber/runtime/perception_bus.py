@@ -72,8 +72,7 @@ class PerceptionBus:
                     if items and arrived >= deadline:
                         break
                     items.append(item)
-                    if item.kind != 'chat':
-                        gap = min(gap, self.live_gap)
+                    gap = min(gap, self.text_gap if item.kind == 'chat' else self.live_gap)
                     deadline = min(arrived + gap, ceiling)
                 remaining = deadline - asyncio.get_running_loop().time()
                 if remaining <= 0 or self._closed:

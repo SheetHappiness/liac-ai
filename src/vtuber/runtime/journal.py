@@ -100,6 +100,10 @@ class Journal:
         with self._transaction():
             return self._append(event)
 
+    def append_many(self, events: tuple[Event, ...]) -> tuple[Event, ...]:
+        with self._transaction():
+            return tuple(self._append(event) for event in events)
+
     def read(self, character_id: CharacterId, *, after: int = 0,
              limit: int = 100) -> tuple[Event, ...]:
         if after < 0 or limit < 1:
@@ -316,8 +320,9 @@ class Journal:
                     if base.compacted_through_sequence < e.sequence <= cutoff))
             if not dialogue and compaction is None:
                 return None
-            # Audit records are decisions, not new observations for the model.
-            observed = tuple(e for e in events if not e.kind.startswith(('deep.', 'state.patch.', 'context.epoch.')))
+            # M5.0 raw perceptions and audit records are not semantic model observations.
+            observed = tuple(e for e in events if e.kind != 'perception.received'
+                and not e.kind.startswith(('deep.', 'state.patch.', 'context.epoch.')))
             return DeepRequest(request_id, snapshot, cursor, observed, compaction, working_context_tokens,
                 initiative_allowed, self.pending_initiative(character_id), recovery_epoch)
 
