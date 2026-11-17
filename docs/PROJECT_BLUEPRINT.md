@@ -668,6 +668,20 @@ No Qt, QML, Loonyball UI object, reaction id, skin or bubble layout may appear i
 
 Voice transcript, desktop window, game API, chat, Spotify/OBS etc. each normalize into typed observations with `source`, `captured_at`, `confidence`/uncertainty, `expires_at`, `scope` and privacy flags. Sensors are adapters that cannot write memory or directly call Luna. A source event can request attention but cannot claim controller authority.
 
+**DECIDED (M5.0, 2026-11-17):** The implemented in-process Perception Bus owns
+ephemeral bounded intake, monotonic arrival ordering and same-key quiet-gap
+batching. Journal owns durable raw provenance and an atomic synthesized local
+chat turn; Runtime owns the existing cancellation and Fast lifecycle. Meaningful
+overflow explicitly raises `PerceptionQueueFull`; noise is discarded with counts.
+Only direct single-author `chat` from source/key `local` starts Fast. Ambient
+perceptions are audit-only, excluded from semantic Deep observations. Defaults
+`live_gap=0.30s`, `text_gap=0.75s`, `max_window=2.0s`, `max_pending=256` are
+**EXPERIMENT** values, not latency guarantees. Queue acceptance is not durability.
+No context/template, schema, Hot/Cold policy or additional worker change.
+See [M5.0 evidence and limits](M5_0_PERCEPTION_BUS.md).
+Perception-to-context routing and volatile Live State are **FUTURE (M5.1)**;
+the richer external sensor metadata described above remains future work.
+
 ### 15.4 Voice [FUTURE]
 
 Voice recognition becomes a new input adapter. Critical latency path stays local and model-independent. TTS is a presentation/output adapter and is not needed for initial cognitive development. Design for cancellation and text-to-speech alignment later without forcing it into backend v0.
@@ -858,6 +872,15 @@ Deliver: minimal interest/intention/activity lifecycle, cooldowns, one-shot beat
 ### M5 – External integration contract [AFTER BACKEND PROOF]
 
 Deliver: stable transport for Loonyball client, stream/cancel/reconnect, semantic reaction intents, health and snapshot projection. **Exit:** external presentation can be connected without importing Loonyball or changing core schemas.
+
+#### M5.0 – Perception Bus [IMPLEMENTED, OFFLINE VERIFIED]
+
+The first internal intake slice is complete: isolated keys, bounded quiet-gap and
+hard-window batching, explicit overload, atomic raw/group ingestion, retry and
+restart checks, and ambient/noise silence. The Bus→Runtime→SQLite pipeline uses
+fake Fast/Deep in acceptance tests. External transport remains pending. No live
+provider or external-sensor compatibility claim is made. M5.1 context routing
+and Live State remain **FUTURE**. See [implementation report](M5_0_PERCEPTION_BUS.md).
 
 ### M6+ – Future, NOT FIRST MILESTONE
 

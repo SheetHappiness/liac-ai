@@ -13,6 +13,7 @@ from vtuber.contracts.perception import PerceptionBatch
 from vtuber.minds.fake import FakeDeep, FakeFast
 from vtuber.runtime.journal import EventConflict, Journal
 from vtuber.runtime.orchestrator import Runtime
+from vtuber.runtime.perception_bus import PerceptionBus
 
 
 def batch(*items):
@@ -277,3 +278,43 @@ class PerceptionRuntimeTests(unittest.IsolatedAsyncioTestCase):
         with self.assertRaises(RuntimeError):
             await runtime.submit_perceptions(batch(perception()))
         self.assertEqual(self.journal.high_watermark('primary'), 0)
+
+    async def test_live_like_burst_full_pipeline(self):
+        async with asyncio.timeout(3):
+            fast, deep = RecordingFast(), RecordingDeep()
+            runtime = await self.start(fast=fast, deep=deep)
+            bus = PerceptionBus(text_gap=.06, live_gap=.02, max_window=1)
+            draining = asyncio.create_task(bus.drain())
+            self.addAsyncCleanup(bus.close)
+            try:
+                for i, text in enumerate(('first line', 'second line', 'third line')):
+                    await bus.publish(perception(f'pipeline-{i}', content=text))
+                    await asyncio.sleep(.015)
+                grouped = await draining
+                await (await runtime.submit_perceptions(grouped))
+            finally:
+                draining.cancel()
+                await asyncio.gather(draining, return_exceptions=True)
+            terminal, = self.events('character.reply.completed')
+            await until(lambda: self.journal.cursor('primary') >= terminal.sequence)
+            self.assertEqual([e.event_id for e in self.events('perception.received')],
+                             ['pipeline-0', 'pipeline-1', 'pipeline-2'])
+            user, = self.events('user.message.completed')
+            self.assertEqual(user.payload['text'], 'first line\nsecond line\nthird line')
+            self.assertEqual(user.turn_id, terminal.turn_id)
+            self.assertEqual(self.journal.unfinished_inputs('primary'), ())
+            self.assertEqual(self.journal.fast_snapshot('primary').terminal_turns,
+                             ((user.turn_id, terminal.sequence),))
+            self.assertEqual(len(deep.requests), 1)
+            self.assertEqual(len(fast.calls), 1)
+            await bus.publish(perception('pipeline-ambient', kind='observation', delivery='ambient'))
+            self.assertFalse(await bus.publish(perception('pipeline-noise', delivery='noise')))
+            self.assertIsNone(await runtime.submit_perceptions(await bus.drain()))
+            await asyncio.sleep(.03)
+            self.assertEqual(len(deep.requests), 1)
+            self.assertEqual(len(fast.calls), 1)
+            self.assertIsNotNone(self.journal.get('pipeline-ambient'))
+            self.assertIsNone(self.journal.get('pipeline-noise'))
+            self.assertIsNone(self.journal.deep_request('primary', request_id='no-extra-loop'))
+            await bus.close()
+            self.assertIsNone(await bus.drain())

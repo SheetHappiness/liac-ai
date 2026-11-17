@@ -17,6 +17,19 @@ belong in separate Bolt fine-tuning; the current older checkpoint is acceptable.
 See [role specification](docs/superpowers/specs/2026-11-16-m4-7-bolt-luna-roles.md)
 and [verification report](docs/M4_7_BOLT_LUNA_ROLES.md).
 
+## M5.0: Perception Bus
+
+The in-process `PerceptionBus` groups bursts on a quiet gap with a hard window
+and bounded capacity. `Runtime.submit_perceptions()` atomically preserves raw
+inputs and renders direct local chat into one canonical user turn and Fast reply.
+Ambient inputs are audit-only; noise is discarded with diagnostic counts.
+The supported direct route is `kind='chat', source='local', conversation_key='local'`,
+with one author per batch. Other direct routes raise `ValueError`.
+Experimental defaults: live gap 0.30s, text gap 0.75s, max window 2.0s,
+max pending 256. Queue acceptance is ephemeral, not a durable acknowledgement.
+CLI and desktop continue to submit ordinary single messages; batching is an
+explicit API for local callers. See [usage, verification and limits](docs/M5_0_PERCEPTION_BUS.md).
+
 ## Run
 
 Python 3.12+ and HTTPX. From the repository root in PowerShell:
