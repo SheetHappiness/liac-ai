@@ -120,7 +120,8 @@ class DeepWorker:
                     pressure = self._compact or self._pressure()
                     request = self.journal.deep_request(self.character_id, request_id=new_id('deep'), compact=pressure, recover=recover,
                         working_context_tokens=self.context_policy.working_context_tokens if self.context_policy else 2048,
-                        initiative_allowed=self.initiative_enabled)
+                        initiative_allowed=self.initiative_enabled,
+                        cutoff_selector=self.context_policy.semantic_cutoff if self.context_policy else None)
                     self._compact = False
                     self._recover = False
                     if request is None:

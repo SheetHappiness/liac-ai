@@ -419,12 +419,17 @@ cycle receives that Epoch and required canonical history even if pressure fell;
 only an applied Luna summary clears pending recovery. Overflow remains explicit
 degradation. No importance ranking, extract selection or oldest-user anchor.
 
-M4.7 preserves the 75% asynchronous trigger and 90% local pressure path. Local
-fallback retains up to three turns within `min(2048, input_limit // 4)`. This is
-not the semantic compaction boundary: `Journal.deep_request()` currently selects
-the last terminal turn, reserving no approximately 1000-token raw hot suffix.
-The intended cold-summary + untouched hot-history + newer-dialogue lifecycle is
-separate follow-up work. Frozen Fast requests remain unchanged while Luna runs;
+M4.8 preserves the 75% asynchronous trigger and 90% local pressure path. Normal
+semantic compaction selects Cold before the shortest whole-turn raw Hot suffix
+whose rendered token-count delta reaches 1024; if all dialogue is Hot, no
+ordinary summary is requested. Luna's `compaction.through` marks only Cold;
+later dialogue remains raw. Explicit compaction requires an injected selector.
+Local fallback is separate degradation: it retains up to three turns within
+`min(2048, input_limit // 4)` (888 tokens with the default 4096-token setup),
+so it does not guarantee the semantic Hot target. Recovery covers at least the
+active fallback cutoff using canonical history and the last meaningful Epoch;
+equal-cutoff summary replacement remains valid, and older cutoffs cannot rewind.
+Frozen Fast requests remain unchanged while Luna runs;
 old full context is used while it fits, subject to existing fallback. `note` and
 `compaction` stay separate. Prefix bytes are stable for Markdown-only updates in
 one Epoch; a changed summary naturally invalidates the prefix after identity.

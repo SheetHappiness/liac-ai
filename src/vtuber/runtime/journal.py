@@ -6,7 +6,7 @@ from contextlib import contextmanager
 from dataclasses import asdict, replace
 from pathlib import Path
 from datetime import datetime, timedelta
-from typing import Iterator
+from typing import Callable, Iterator
 
 from vtuber.contracts.events import CharacterId, CharacterInitiative, Event, canonical_json, utc_now
 from vtuber.contracts.context import CompactionProposal, CompactionResult, ContextEpoch, ContextItem
@@ -257,11 +257,14 @@ class Journal:
 
     def deep_request(self, character_id: str, *, request_id: str,
                      max_events: int = 100, compact: bool = False, recover: bool = False,
-                     working_context_tokens: int = 2048, initiative_allowed: bool = False) -> DeepRequest | None:
+                     working_context_tokens: int = 2048, initiative_allowed: bool = False,
+                     cutoff_selector: Callable[[FastSnapshot], int | None] | None = None) -> DeepRequest | None:
         if max_events < 1 or not request_id.strip():
             raise ValueError('Invalid Deep request')
         with self._transaction():
             recovery = self.epoch_recovery(character_id)
+            if compact and cutoff_selector is None and not recovery.get('recovery_pending'):
+                raise ValueError('Semantic compaction requires cutoff_selector')
             cursor = self.cursor(character_id)
             pending, safe, opened = [], 0, set()
             for row in self._db.execute('SELECT * FROM events WHERE character_id=? AND sequence>? ORDER BY sequence',
@@ -296,20 +299,23 @@ class Journal:
             canonical = tuple(self._decode(row) for row in rows)
             terminals = tuple(e for e in canonical if e.kind in (
                 'character.reply.completed', 'character.reply.cancelled', 'character.reply.failed'))
-            cutoff = terminals[-1].sequence if terminals else 0
             eligible = tuple(e for e in canonical if e.kind in ('user.message.completed', 'character.reply.completed'))
+            snapshot = FastSnapshot(self.snapshot(character_id), through,
+                tuple(e for e in eligible if e.sequence > epoch.compacted_through_sequence), epoch,
+                tuple((e.turn_id, e.sequence) for e in terminals if e.sequence > epoch.compacted_through_sequence))
             compaction = None
             recovery_epoch = (self.context_epoch(character_id, recovery['meaningful_epoch_version'])
                               if recovery.get('recovery_pending') else None)
-            if compact and (cutoff > epoch.compacted_through_sequence or recovery_epoch is not None):
+            cutoff = cutoff_selector(snapshot) if compact and cutoff_selector else None
+            if recovery_epoch is not None:
+                cutoff = max(cutoff or 0, epoch.compacted_through_sequence)
+            if (cutoff is not None and cutoff <= through
+                    and (cutoff > epoch.compacted_through_sequence or recovery_epoch is not None)):
                 base = recovery_epoch or epoch
                 compaction = CompactionInput(cutoff, tuple(e for e in eligible
                     if base.compacted_through_sequence < e.sequence <= cutoff))
             if not dialogue and compaction is None:
                 return None
-            snapshot = FastSnapshot(self.snapshot(character_id), through,
-                tuple(e for e in eligible if e.sequence > epoch.compacted_through_sequence), epoch,
-                tuple((e.turn_id, e.sequence) for e in terminals if e.sequence > epoch.compacted_through_sequence))
             # Audit records are decisions, not new observations for the model.
             observed = tuple(e for e in events if not e.kind.startswith(('deep.', 'state.patch.', 'context.epoch.')))
             return DeepRequest(request_id, snapshot, cursor, observed, compaction, working_context_tokens,
