@@ -97,7 +97,10 @@ or repeat generation. The existing single-Runtime database ownership applies.
 Ambient-only batches neither start/cancel Fast nor notify Luna. They do not mutate
 an in-flight Fast snapshot or appear in canonical dialogue. Raw perception events
 are excluded from Deep semantic observations even when interleaved inside a chat
-turn; existing cursor checks still acknowledge audit-only tails. Noise has no
+turn; existing cursor checks still acknowledge audit-only tails. The existing
+Deep worker continues after a check that advances the audit cursor, so multiple
+audit pages cannot strand later dialogue. A check with no cursor progress still
+stops; audit input does not create an inference loop. Noise has no
 durable event, speech or semantic processing. Initiative remains disabled by
 default. No SQLite schema or Deep schema-v3 change was needed; ContextCompiler,
 Hot/Cold selection, Epoch, tokenizer, Nemotron and fallback behavior are unchanged.
@@ -116,11 +119,11 @@ git diff --check
 ```
 
 - Before changes: 129 tests, 128 passed, one existing desktop error.
-- M5.0 targeted acceptance: 35 passed. The contract, Bus, Journal and Runtime
+- M5.0 targeted acceptance: 36 passed. The contract, Bus, Journal and Runtime
   API tests were observed failing before implementation and passing afterward.
 - Cross-milestone targeted check before the final pipeline test: 63 passed;
-  the broader contract/Bus/lifecycle/Deep/context check passed 82 tests.
-- Full suite after integration: 164 tests, 163 passed, the same baseline error:
+  final contract/Bus/lifecycle/Deep/context checks passed 84 tests.
+- Final full suite: 165 tests, 164 passed, the same baseline error:
   `test_desktop.WindowTests.test_chat_context_selection_and_offline_history`
   because `MainWindow.context` is absent. No new full-suite failures.
 - The bounded `test_live_like_burst_full_pipeline` uses the actual Bus, Runtime
@@ -135,6 +138,15 @@ git diff --check
   routes, active snapshots, supersession, restart and existing Hot/Cold boundaries.
 - CLI `/status` and `/quit` completed with fake backends and closed storage.
   Private CLI storage stays in ignored `.data/`. Whitespace checks passed.
+- A separate stdin Python smoke using only public APIs, default Bus timings,
+  real ignored SQLite and fake backends produced three raw events, one canonical
+  user input, one terminal reply and one Deep batch. Replay returned no new task;
+  shutdown left no unfinished inputs.
+- Fresh independent whole-branch review found one important backlog issue and
+  no minor findings. More than two audit pages could strand subsequent completed
+  dialogue because a `None` request was treated as exhaustion. The 250-ambient
+  regression failed before the shared-worker cursor-progress fix and passed
+  afterward; the final suite above includes that fix. No re-review was performed.
 
 ## Reference and limits
 

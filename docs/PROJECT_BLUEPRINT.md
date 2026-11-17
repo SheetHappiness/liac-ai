@@ -677,7 +677,7 @@ Only direct single-author `chat` from source/key `local` starts Fast. Ambient
 perceptions are audit-only, excluded from semantic Deep observations. Defaults
 `live_gap=0.30s`, `text_gap=0.75s`, `max_window=2.0s`, `max_pending=256` are
 **EXPERIMENT** values, not latency guarantees. Queue acceptance is not durability.
-No context/template, schema, Hot/Cold policy or additional worker change.
+No context/template, schema or Hot/Cold policy change; no additional worker.
 See [M5.0 evidence and limits](M5_0_PERCEPTION_BUS.md).
 Perception-to-context routing and volatile Live State are **FUTURE (M5.1)**;
 the richer external sensor metadata described above remains future work.

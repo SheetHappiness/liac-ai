@@ -239,6 +239,21 @@ class PerceptionRuntimeTests(unittest.IsolatedAsyncioTestCase):
         await until(lambda: len(deep.requests) == 2)
         self.assertFalse(any(e.kind == 'perception.received' for e in deep.requests[-1].events))
 
+    async def test_ambient_backlog_does_not_strand_next_dialogue(self):
+        deep = RecordingDeep()
+        runtime = await self.start(deep=deep)
+        await asyncio.sleep(0)
+        await runtime.submit_perceptions(batch(*(perception(f'ambient-{i}', delivery='ambient')
+                                                  for i in range(250))))
+        self.assertEqual(deep.requests, [])
+        await (await runtime.submit_perceptions(batch(perception('after-backlog'))))
+        await until(lambda: len(deep.requests) == 1)
+        terminal, = self.events('character.reply.completed')
+        self.assertGreaterEqual(self.journal.cursor('primary'), terminal.sequence)
+        self.assertFalse(any(e.kind == 'perception.received' for e in deep.requests[0].events))
+        await asyncio.sleep(.02)
+        self.assertEqual(len(deep.requests), 1)
+
     async def test_group_does_not_change_hot_cold_selector(self):
         compiler = ContextCompiler('Identity', token_counter=lambda ms: sum(len(m.content) for m in ms))
         runtime = await self.start(compiler=compiler)
