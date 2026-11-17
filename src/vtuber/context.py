@@ -146,6 +146,27 @@ class ContextCompiler:
     def input_tokens(self, snapshot: FastSnapshot, message: FastInput) -> int:
         return self.count(self._messages(snapshot, message, self._history(snapshot, message), snapshot.epoch.items))
 
+    def semantic_cutoff(self, snapshot: FastSnapshot) -> int | None:
+        probe = UserMessage('Budget probe', snapshot.state.character_id)
+        history = self._history(snapshot, probe)
+        ends = dict(snapshot.terminal_turns)
+        ends.update((e.turn_id, e.sequence) for e in history
+                    if e.kind == 'character.reply.completed' and e.turn_id)
+        users = tuple(e for e in history if e.kind == 'user.message.completed')
+        if any(e.turn_id not in ends for e in users):
+            return None
+        baseline = self.count(self._messages(snapshot, probe, (), snapshot.epoch.items))
+        for cutoff in sorted(set(ends.values()), reverse=True):
+            if not snapshot.epoch.compacted_through_sequence < cutoff <= snapshot.through_sequence:
+                continue
+            if any(ends[e.turn_id] > cutoff for e in users if e.sequence <= cutoff):
+                continue
+            hot = tuple(e for e in history if e.sequence > cutoff)
+            cost = self.count(self._messages(snapshot, probe, hot, snapshot.epoch.items)) - baseline
+            if hot and cost >= 1024:
+                return cutoff
+        return None
+
     def _item_budget(self, snapshot: FastSnapshot, message: FastInput,
                      items: tuple[ContextItem, ...]) -> int:
         return self.count(self._messages(snapshot, message, (), items)) - self.count(self._messages(snapshot, message, (), ()))

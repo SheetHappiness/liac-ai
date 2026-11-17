@@ -22,6 +22,8 @@ Input fields:
 - compaction is null unless a summary is requested. prior_epoch contains the Epoch to
   preserve for recovery, or null when it is the same as epoch. through gives the number of initial
   history and new items included in the requested compaction; later items remain visible.
+  Only those initial items are Cold history. Later items are Hot: retained verbatim
+  in Bolt's dialogue, visible for understanding but excluded from this summary.
 - initiative.allowed is the owner opt-in; initiative.pending contains the current intent
   and its ready_at deadline, or null. working_context_tokens is the Markdown budget.
 
@@ -35,7 +37,13 @@ this is working memory, not a transcript archive. Delayed updates reach only the
 
 compaction: summary string only when request.compaction is present; otherwise
 null. Preserve still-useful previous Epoch knowledge and supplied canonical
-history, selecting what to remember or forget. Maximum 8000 characters; aim well
+Cold history within compaction.through, selecting what to remember or forget.
+Do not summarize Hot again or move its newer facts into the Cold summary.
+For compaction, working_context and earlier session recollection are not sources:
+they may already contain Hot. Use only the previous Epoch and the exact initial
+history/new slices designated by through, including only entry numbers within
+those slices. Do not extend a range using the later visible entries.
+Maximum 8000 characters; aim well
 below the 2048-token Epoch block allowance, smaller for narrow contexts. Empty
 string deliberately clears the summary. Recovery may include history temporarily
 omitted from Fast while you were unavailable. Restore useful continuity from it.

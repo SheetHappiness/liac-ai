@@ -9,6 +9,53 @@ from vtuber.minds.nemotron import render_nemotron
 
 
 class ContextTests(unittest.TestCase):
+    def semantic_snapshot(self, sizes, kinds=None):
+        events, terminals = [], []
+        for index, size in enumerate(sizes):
+            turn = f'turn-{index}'
+            user = replace(Event.create('primary', 'user.message.completed',
+                {'text': 'u' * size}, turn_id=turn), sequence=len(events) + 1)
+            events.append(user)
+            kind = kinds[index] if kinds else 'completed'
+            terminal = replace(Event.create('primary', 'character.reply.' + kind,
+                {'text': ''} if kind == 'completed' else {'reason': 'test'}, turn_id=turn),
+                sequence=len(events) + 1)
+            events.append(terminal)
+            terminals.append((turn, terminal.sequence))
+        dialogue = tuple(e for e in events if e.kind in ('user.message.completed', 'character.reply.completed'))
+        return FastSnapshot(CharacterState('primary'), len(events), dialogue,
+                            terminal_turns=tuple(terminals))
+
+    def test_semantic_cutoff_preserves_1024_target_and_whole_turns(self):
+        compiler = ContextCompiler('Identity', token_counter=lambda ms: sum(len(m.content) for m in ms))
+        for sizes, expected in [([900, 600, 500], 2), ([900, 1400], 2),
+                                ([900, 1024], 2), ([], None), ([700], None),
+                                ([1400], None), ([500, 523], None)]:
+            with self.subTest(sizes=sizes):
+                self.assertEqual(compiler.semantic_cutoff(self.semantic_snapshot(sizes)), expected)
+
+    def test_semantic_cutoff_counts_suffix_render_not_individual_events(self):
+        # Framing contributes 100 tokens per message, only once in the full render.
+        compiler = ContextCompiler('Identity', token_counter=lambda ms:
+            sum(len(m.content) for m in ms) + 100 * len(ms))
+        self.assertEqual(compiler.semantic_cutoff(self.semantic_snapshot([900, 700, 200])), 2)
+
+    def test_semantic_cutoff_requires_globally_closed_turns(self):
+        compiler = ContextCompiler('Identity', token_counter=lambda ms: sum(len(m.content) for m in ms))
+        snapshot = self.semantic_snapshot([900, 600, 500])
+        # Turn 1 opens before turn 0 closes; cutoff 2 would split turn 1.
+        first, second, third = snapshot.recent_dialogue[:3]
+        interleaved = replace(snapshot, recent_dialogue=(first,
+            replace(third, sequence=2), replace(second, sequence=3),
+            *snapshot.recent_dialogue[3:]), terminal_turns=(('turn-0', 3), ('turn-1', 4), ('turn-2', 6)))
+        self.assertIsNone(compiler.semantic_cutoff(interleaved))
+        for kind in ('cancelled', 'failed'):
+            with self.subTest(kind=kind):
+                self.assertEqual(compiler.semantic_cutoff(self.semantic_snapshot([900, 1400], [kind, kind])), 2)
+        unfinished = replace(snapshot, terminal_turns=snapshot.terminal_turns[:1],
+            recent_dialogue=tuple(e for e in snapshot.recent_dialogue if e.kind == 'user.message.completed'))
+        self.assertIsNone(compiler.semantic_cutoff(unfinished))
+
     def test_state_update_preserves_rendered_history_prefix(self):
         history = (
             replace(Event.create("primary", "user.message.completed", {"text": "history question"}), sequence=1),
