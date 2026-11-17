@@ -118,6 +118,7 @@ class DeepWorker:
                 revision = self.journal.snapshot(self.character_id).revision
                 try:
                     pressure = self._compact or self._pressure()
+                    cursor = self.journal.cursor(self.character_id)
                     request = self.journal.deep_request(self.character_id, request_id=new_id('deep'), compact=pressure, recover=recover,
                         working_context_tokens=self.context_policy.working_context_tokens if self.context_policy else 2048,
                         initiative_allowed=self.initiative_enabled,
@@ -125,6 +126,10 @@ class DeepWorker:
                     self._compact = False
                     self._recover = False
                     if request is None:
+                        if self.journal.cursor(self.character_id) > cursor:
+                            # An audit-only page can precede unprocessed dialogue.
+                            await asyncio.sleep(0)
+                            continue
                         break
                     key = (request.snapshot.epoch.version, request.snapshot.state.revision,
                            request.compaction.cutoff if request.compaction else None)
