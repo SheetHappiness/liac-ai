@@ -3,8 +3,8 @@ import unittest
 from contextlib import closing
 from dataclasses import replace
 
-from test_perception import perception
-from test_perception_runtime import batch
+from tests._fixtures import perception
+from tests._fixtures import batch
 from vtuber.contracts.events import Event, UserMessage
 from vtuber.minds.m6_context import build_m6_messages
 from vtuber.runtime.journal import EventConflict, Journal
