@@ -3,15 +3,25 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from tests._fixtures import perception
-from tests._fixtures import batch
+from test_perception import perception
+from test_perception_runtime import batch
 from vtuber.contracts.events import Event
 from vtuber.contracts.mind import MindDecision
 from vtuber.runtime.journal import Journal
 from vtuber.runtime.single_mind import SingleMindRuntime
 
 
-from tests._fixtures import ScriptedMind
+class ScriptedMind:
+    def __init__(self, *scripts):
+        self.calls = []
+        self.scripts = iter(scripts)
+
+    async def generate(self, messages, *, on_speak_delta=None):
+        self.calls.append(messages)
+        scripted = next(self.scripts)
+        if isinstance(scripted, MindDecision):
+            return scripted
+        return await scripted(messages, on_speak_delta)
 
 
 class SingleMindRuntimeTests(unittest.IsolatedAsyncioTestCase):
