@@ -102,5 +102,77 @@ including repeated cancellation. Tool decisions require raw JSON argument stream
 evidence matching the provider's completed call. Missing deltas, duplicate
 properties, malformed arguments and stale frames cannot authorize a decision.
 
-This work covers Tasks 1 and 2. Durable Journal ingestion, tool-call replay,
-SingleMind runtime and end-to-end console acceptance remain for Tasks 3–5.
+## Text console
+
+Use the source checkout and Python 3.12 or newer. Fake mode uses the same
+Perception Bus, Journal and SingleMind Runtime as Luna. It requires no Bun,
+provider login or local model server.
+
+```powershell
+$env:PYTHONPATH='src;tests;vendor/omp-rpc/src'
+python -m vtuber.m6 --backend fake --db .data/m6-fake.sqlite3
+python -m vtuber.m6 --backend luna --reasoning low --db .data/m6-0.sqlite3
+```
+
+The Luna command expects the bridge dependencies and OAuth login from Task 1.
+Use `--bun` with the executable path when Bun is outside `PATH`. For example,
+`$bunExe = npx --yes --package=bun@1.4.4 bun -e 'console.log(process.execPath)'`
+locates the pinned `npx` installation. Type text and use `/quit` to drain
+pending input and finish the last turn. `[Provisional]` marks streaming text.
+`[Final]` shows the completed reply. Silence produces no spoken line.
+
+Keep the experiment on its own ignored SQLite file. The M6 prompt uses the
+character identity, one short operating instruction and the last 40 canonical
+dialogue events. Only completed M6 tool calls replay as matched call/result
+pairs. Legacy replies remain plain assistant text. Ambient events stay in the
+Journal. On restart, unfinished inputs close as cancelled without regeneration.
+The bridge caps JSONL frames at 64 KiB. The M5.0 CLI keeps its original entry
+point and flags.
+
+## End-to-end acceptance
+
+Python 3.14.7, Bun 1.4.4 and pi-ai 18.22.1 ran one authenticated
+`openai-codex/gpt-6-luna` `low` session through the console, Perception Bus,
+SingleMind Runtime and fresh `.data/m6-0.sqlite3`. A test driver fed synthetic
+console lines and captured timings at the bridge boundary. The first prompt
+arrived as a two-line burst. Timings start at bridge turn receipt and exclude
+the Bus settling window.
+
+| Trial | Completed action | First event (ms) | First tool delta (ms) | First decoded speech (ms) | Completed (ms) | Input / output tokens |
+| --- | --- | ---: | ---: | ---: | ---: | ---: |
+| 1 | `speak` | 892 | 1246 | 1393 | 1475 | 104 / 25 |
+| 2 | `speak` | 396 | 773 | 925 | 959 | 159 / 23 |
+| 3 | `speak` | 512 | 1808 | 1942 | 2055 | 210 / 26 |
+| 4 | `stay_silent` | 534 | 1018 | — | 1056 | 271 / 16 |
+| 5 | `speak` | 480 | 2297 | 2426 | 2494 | 318 / 22 |
+| 6 | `stay_silent` | 536 | 1020 | — | 1059 | 370 / 16 |
+| 7 | `speak` | 479 | 956 | 1086 | 1204 | 413 / 26 |
+| p50 | | 512 | 1020 | 1393 | 1204 | |
+
+All seven outcomes matched the scenarios. The Journal held eight raw
+perceptions, seven canonical inputs, seven completed replies with distinct
+tool-call IDs, and zero unfinished inputs. Replayed tool results grew from zero
+to six across the session. All five speech previews matched their final text
+and both silence turns emitted zero preview fragments. Usage reported zero
+cache reads and writes, with zero provider or tool-validation failures. The
+sample is too small for a useful p95. `off` remains unavailable on this route.
+An additional `python -m vtuber.m6 --backend luna` entry-point smoke with a
+separate scratch database rendered a completed text reply and exited cleanly.
+
+Offline verification:
+
+```powershell
+python -m unittest test_luna_stream test_m6_context test_single_mind test_m6_cli test_perception_runtime -v
+python -m unittest discover -s tests -v
+node --test tools/luna-bridge/speak_stream.test.mjs tools/luna-bridge/request_privacy.test.mjs
+git diff --check
+```
+
+The focused Python run passed 40 tests and Node passed seven. The fake console
+smoke grouped two quick lines into one reply and closed with zero unfinished
+inputs. The full Python suite passed 187 of 188 tests. Its only error remained
+the baseline `MainWindow.context` desktop regression.
+
+This milestone leaves Wake/Attention, Live State, VLM, M4.8 compaction
+adaptation, TTS and external actions for later work. The measurements cover
+text and tool streaming. Audio delivery and first-audio latency remain unmeasured.
