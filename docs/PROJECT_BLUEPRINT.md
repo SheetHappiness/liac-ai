@@ -1,13 +1,13 @@
 # PROJECT BLUEPRINT – Liac Single Mind
 
-> **Status:** M6 Single Mind is an **EXPERIMENT**. It is a target design, **not** an implemented feature. M0–M5.0 remains the verified legacy baseline.
-> **Updated:** 2026-11-18. **Version:** 0.2.
-> **Active development repository (new Single Mind):** [`SheetHappiness/liac-ai`](https://github.com/SheetHappiness/liac-ai). **Legacy system / backup:** [`softsock/liac-ai`](https://github.com/softsock/liac-ai).
-> **Shared M5.0 starting point:** [`7510227`](https://github.com/SheetHappiness/liac-ai/commit/7510227dcb21212c607532150b864ff7757476ce), including M5.0. **Reference:** [ProjectBEA `f2186fc`](https://github.com/emqnuele/projectBEA/tree/f2186fc647db3f9ae65e6463b9f82c882bdca68b).
+> **Status:** M6.0 is an implemented experimental Single Mind baseline on `codex/m6-0-single-mind`; M6.1 is being **redesigned**, not accepted. The `main` branch still contains the documented M0–M5.0 legacy baseline. Do not confuse an experimental branch or offline checks with a released/live-validated milestone.
+> **Updated:** 2026-11-18. **Version:** 0.3.
+> **Active repository:** [`SheetHappiness/liac-ai`](https://github.com/SheetHappiness/liac-ai). **Legacy backup:** [`softsock/liac-ai`](https://github.com/softsock/liac-ai).
+> **Rewrite base:** `codex/m6-0-single-mind` (create a new isolated development branch). **Primary reference:** [ProjectBEA](https://github.com/emqnuele/projectBEA). **Secondary reference:** [LilavelStage](https://github.com/SheetHappiness/LilavelStage).
 
-This is the **target architecture** for `SheetHappiness/liac-ai`, not an assertion that its current code has already changed. Legacy Fast/Deep decisions are superseded *for M6 design*, but remain documented in the [old Blueprint](https://github.com/softsock/liac-ai/blob/7510227dcb21212c607532150b864ff7757476ce/docs/PROJECT_BLUEPRINT.md) and individual implementation reports. Do not treat old decisions about Bolt, OMP Deep or initiative as requirements for M6.
+This is the **target architecture and staged migration plan**, not a claim that all components below have been implemented. Legacy Bolt/Fast + Luna/Deep decisions remain documented in milestone reports but are superseded as the target for M6. The previous `codex/m6-1-attention-live-state` and M6.1.5 Electron Hub are **rejected as implementation foundations**: do not cherry-pick their Perception scheduling, Wake/LiveState or UI pipelines into the rewrite.
 
-**Status vocabulary:** `IMPLEMENTED` – verified in repository; `DECIDED` – architectural direction; `EXPERIMENT` – needs evidence; `FUTURE` – do not implement yet. Agents should read root and scoped `AGENTS.md`, then only relevant Blueprint sections.
+**Status vocabulary:** `IMPLEMENTED` – present with stated evidence; `DECIDED` – approved target, not necessarily coded; `EXPERIMENT` – under evaluation; `FUTURE` – not part of the immediate task. Agents must read the relevant `AGENTS.md`, compare the actual upstream implementations and record source revisions before adapting them.
 
 ## 1. Purpose and character
 
@@ -25,173 +25,165 @@ Quality must be demonstrated in live multi-turn behavior and real latency measur
 
 | ID | Decision | Status |
 | --- | --- | --- |
-| M6-01 | Single GPT-6 Luna cognitive actor; no Bolt/Fast + Luna/Deep split | **EXPERIMENT** |
-| M6-02 | Try reasoning `low` first, then `off`/`none` only if the selected model and route support it | **EXPERIMENT** |
-| M6-03 | Preserve M5.0 Perception Bus and SQLite Journal as the foundation | **DECIDED** |
-| M6-04 | One serialized active cognitive turn, bounded tool steps | **DECIDED** |
-| M6-05 | Separate **Wake** (should Luna run?) from **Attention** (what is important?) | **DECIDED** |
-| M6-06 | Explicit `speak` / `stay_silent` tools; actions only through Runtime | **EXPERIMENT** |
-| M6-07 | Replay completed speech as tool calls and outcomes, not plain assistant text | **DECIDED** |
-| M6-08 | Adapt M4.8 Cold/Hot safety without copying Bea's separate storage/window system | **DECIDED** |
-| M6-09 | Prefer minimal streaming transport with explicit prompt control | **EXPERIMENT** |
-| M6-10 | Perception → Attention → VLM first, then TTS and real first-audio benchmark | **DECIDED** |
-| M6-11 | Keep the code and checks as small as practical | **DECIDED** |
+| M6-01 | One GPT-6 Luna speaking/acting mind, retain M6.0 `SingleMindPort`, Bun/pi-ai bridge, `speak`/`stay_silent`, streaming output and Journal | **DECIDED** (M6.0 baseline implemented on branch) |
+| M6-02 | Rewrite M6.1 **from `codex/m6-0-single-mind`**, never from M6.1/M6.1.5 | **DECIDED** |
+| M6-03 | Adapt ProjectBEA PerceptionBus: one intake, last-arrival quiet-gap settle, text/live windows, ceiling, backlog handling | **DECIDED** |
+| M6-04 | Adapt ProjectBEA single `Consciousness.run` ownership: one batch → one frame → one serialized turn | **DECIDED** |
+| M6-05 | Input arriving while Luna is active **queues**, not unconditionally cancels/supersedes; controlled voice restart/steering requires separate proof | **DECIDED** |
+| M6-06 | Distinguish BEA `Attention.annotate` (ranking, no cutoff) from LilavelStage `AdmissionPolicy` (whether inference is permitted) | **DECIDED** |
+| M6-07 | Preserve one canonical SQLite Journal. Keep history, tools and derived memory projections separate from debug traces | **DECIDED** |
+| M6-08 | Adapt BEA/LilavelStage action lifecycle and scoped `TurnAuthority` when real external tools exist | **DECIDED**, staged |
+| M6-09 | Later adapt person/roster memory, Agenda, Open Threads, spontaneous presence/rhythm and bounded context handoff | **DECIDED**, staged |
+| M6-10 | **Never port LilavelStage Shadow Memory**, shadow proposer/verifier, background reflection, shadow retrieval or its semantic index | **DECIDED** |
+| M6-11 | Build structured trace using LilavelStage TraceBus and BEA EventManager/TurnLog; expose live timeline/replay/compiled context in **Electron**, not terminal TUI | **DECIDED**, later |
+| M6-12 | Electron typed input is a simulator for finalized STT input, routed into the *same* PerceptionBus; never a parallel chat mind | **DECIDED**, later |
+| M6-13 | Defer silent observation/LiveState, VLM, game telemetry and real STT until their adapters exist; do not invent sensor traffic now | **DECIDED** |
+| M6-14 | Prove BEA-equivalent behavior with deterministic tests and a real Luna smoke run *before* modifying or optimizing upstream semantics | **DECIDED** |
 
-### 2.1 Minimalism and essential checks [DECIDED]
+### 2.1 Adaptation policy and engineering limits [DECIDED]
 
-**Prefer the shortest comprehensible implementation over defensive architecture.** Reuse stdlib, existing project modules and existing SQLite; introduce a new abstraction only when two actual consumers or an unavoidable boundary justify it.
+**Reference first, adapt second, improve third.** First write a mapping of ProjectBEA → Liac and enumerate deliberate differences. LilavelStage is a secondary reference for its separately implemented Admission, tools/authority and trace; it is not the new base and is not assumed to match upstream BEA.
 
-Do **not** add redundant `isinstance` checks to already validated internal dataclasses, multiple validation layers for the same value, speculative format migration, generic plugin/agent frameworks, needless retries, elaborate policy engines, future-proof configuration knobs or tests solely to raise coverage.
+Retain M6.0's smallest stable model/Journaling contracts, but do not use a blanket minimalism rule to strip out important BEA behavior. A central event loop, correct batching, steering seams, and observational traces are core product functionality.
 
-**Keep the few checks that prevent real harm:**
+Essential invariants: no lost/doubled input, correct ingress order and scope, bounded queues, idempotent canonical writes, no unauthorized tool effects, one owner of turns, no unsafe output on restart/shutdown. Prefer end-to-end tests for these properties over speculative abstractions.
 
-- **Data integrity:** atomic Journal writes; stable IDs; no duplicate speech/action on retry or restart.
-- **Cancellation and ordering:** stale turns, results and audio cannot overtake a newer active turn.
-- **Untrusted effects:** verify permission, destination and necessary tool arguments before real external actions or cloud disclosure.
-- **Bounded work:** prevent unbounded sensor, audio, image and event backlogs; close owned tasks correctly.
-- **Context:** don't split raw Hot turns; don't let a late summary replace newer history.
-
-When an edge case is merely hypothetical and cannot break these invariants, don't add a guard for it. Record and test **observed failures**, not every imaginable state. If a milestone needs many layers to work, reduce its scope.
-
-**Not needed now:** Dream Engine, mood state machine, vector DB, universal SkillRegistry, multi-agent coordinator, large dashboard, distributed services, arbitrary desktop execution, custom model orchestration framework.
+Do not mix a full Electron rebuild, VLM, voice, unrelated memory experiments or latency tuning into the **first** Perception Loop PR. Each later module needs independent acceptance evidence. Any significant adapted upstream source must retain the appropriate MIT copyright and license notices.
 
 ## 3. Target architecture
 
 ```text
-Local chat / future voice-STT, window-VLM, game, Discord
-                        |
-                  PerceptionBus
-             quiet-gap batching / dedupe
-                        |
-                 SQLite Journal
-                 canonical events
-                        |
-               Wake + Attention
-           small deterministic policy
-                        |
-                  Context Builder
-        identity + history + memory + live state
-                        |
-                 GPT-6 Luna LOW
-                   SINGLE MIND
-                        |
-               speak / silence / tools
-                        |
-             Runtime validates effects
-                        |
-        text / future streaming TTS / avatar
+Electron typed (STT-final simulator), later STT / Discord / VLM / game adapters
+                                |
+                         PerceptionBus
+          one intake → queue → settle(quiet gap) → bounded batch
+                                |
+                     Single Consciousness Loop
+                 canonical intake → Attention → Admission
+                               / \
+                 no admission    admitted
+                      |             |
+                 trace only      frozen frame
+                                    |
+                         GPT-6 Luna Single Mind
+                                    |
+                         tool decisions / results
+                                    |
+                     validated actions + Journal
+                                    |
+                         output / future TTS
 ```
 
-Runtime owns order, transport, action execution and persistence; Luna owns **what** to say and **whether** to say it. There is one active *character decision loop*, not necessarily one process: a specialized VLM or TTS may run independently.
+**One batch, one frame, one turn**, matching ProjectBEA's normal single-loop path. BEA `Attention` sorts relevance; LilavelStage-style `Admission` determines whether to make a model request. These are distinct from Luna's `stay_silent()`, which is an *inference result*, not an inference-skipping policy.
 
-Maintenance may happen asynchronously only if it does not stall the live turn. Do not create a background cognition service preemptively. The existing data flow should remain inspectable using a single Journal and simple tracing.
+A separate **TraceBus** observes input, batch, attention, admission, model, tool and terminal transitions. It is not a second cognition path and must not change turn ordering. The later Electron Hub is a consumer of trace events *and* a trusted test adapter that publishes typed inputs to the same PerceptionBus.
+
+Future ambient/silent LiveState can be added beside canonical intake when a real VLM/game/system adapter supplies observations. It is **not** a deliverable of the first rewrite.
 
 ## 4. Existing foundations and migration boundary
 
-**IMPLEMENTED M5.0:**
+**IMPLEMENTED on `main` (M0–M5.0):** frozen Perception/Batch contracts, bounded same-key Perception Bus, transactional SQLite Journal, canonical input IDs and replay, M4.8 legacy context guarantees. See [M5.0 report](M5_0_PERCEPTION_BUS.md).
 
-- `contracts/perception.py` – frozen typed `Perception` / `PerceptionBatch`, stable IDs, source, author, timestamps, conversation key and delivery.
-- `runtime/perception_bus.py` – FIFO same-key batching, monotonic ingress times, quiet gap, hard maximum window, pending dedupe, explicit overload, cancellation-safe drain.
-- `runtime/journal.py` – canonical SQLite events; transactional local direct input; idempotent replay/restart; provenance of raw inputs.
-- M4.8 – frozen in-flight Fast snapshot, whole-turn Cold/Hot boundary, atomic Epoch update, separate emergency fallback and recovery.
-- M5.0 – ambient audit and noise silence; Deep backlog fix; offline regression suite.
+**IMPLEMENTED on `codex/m6-0-single-mind` (experimental baseline):** Luna through a Bun/pi-ai streaming bridge, `SingleMindPort` and `MindDecision`, `speak`/`stay_silent`, fake model, `RuntimeOutput`, a single-mind runtime, and SQLite Journal. Confirmed limitation in that branch: `SingleMindRuntime.submit_perceptions()` calls `_cancel_active('superseded')` on new direct input; the CLI drain loop does not wait for the prior turn. The rewrite MUST fix this rather than call M6.0's scheduling correct.
 
-**Not implemented:** a one-model Consciousness loop; live M5.0 end-to-end acceptance; automatic CLI/desktop batching; ambient projection to model context; VLM; TTS. Existing `direct` routing supports only one local author with `source='local'` and `conversation_key='local'`.
+**REJECTED as foundation:** `codex/m6-1-attention-live-state` and its M6.1.5 Electron Hub. These prototypes may serve as observed failure cases only, not sources of code to transplant.
 
-[Current Perception Bus report](M5_0_PERCEPTION_BUS.md) · [M4.8 evidence](M4_8_CONTEXT_HANDOFF.md).
+**Primary upstream:** [ProjectBEA](https://github.com/emqnuele/projectBEA), especially perception types/bus, `Consciousness.run`/`_run_turn`/`_turn`/`_steering`, attention rules/gate, tool lifecycle, memory and social rhythm.
 
-Keep working foundations, but do not contort the M6 single-mind design to preserve old Deep result schemas, Luna-as-curator instructions or legacy initiative. Implement M6 on an isolated branch of `SheetHappiness/liac-ai`; retain `softsock/liac-ai` unchanged as the legacy comparison.
+**Secondary upstream:** [LilavelStage](https://github.com/SheetHappiness/LilavelStage), especially `attention/AdmissionPolicy`, scoped `TurnAuthority`, canonical effect rules, `trace.py`, `web_dashboard_assets/`, person/agenda/open threads. Its `bus.py` uses a fixed first-arrival window, **not** BEA's sliding quiet gap; do not import that behavior by mistake.
 
-## 5. Perception and Attention
+Before implementing, record exact reference revisions and a **source → target → deviation** mapping. Use new focused branches/PRs based on M6.0; leave legacy and old experiments intact.
 
-### 5.1 Perception [KEEP M5.0]
+## 5. Perception, batching and admission
 
-Current **EXPERIMENT** defaults: `live_gap=0.30s`, `text_gap=0.75s`, `max_window=2.0s`, `max_pending=256`. These are scheduling choices, not latency promises.
+### 5.1 ProjectBEA-compatible intake [FIRST M6.1 SLICE]
 
-- Retain original source input ID, timestamp, author and route; **ingress** order, not sender timestamp, establishes order.
-- Direct messages are a clear response opportunity; ambient events may inform context; noise is ignored.
-- A group of closely arriving messages is one cognitive opportunity, while each raw message remains individually auditable.
-- Bus acceptance is not durable: Journal commit is. A consumer retains a drained batch until Runtime accepts it.
-- One identity does not imply permission to leak one private channel into another.
+Adapt [BEA `perception/bus.py`](https://github.com/emqnuele/projectBEA/blob/main/src/core/perception/bus.py) and `types.py` as closely as practical:
 
-### 5.2 Wake [NEW M6.1]
+- Every real input adapter publishes one individually identified Perception; adapters never spawn their own LLM turn.
+- `drain()`/`settle()` close batches after a **quiet gap since the last arrival**, not a fixed duration after the first arrival. Each fresh message extends the deadline until a hard `max_window`.
+- Text and live inputs have independently configurable gaps; mixed batches follow BEA's shorter applicable gap. Use monotonic ingress times; queued items must not be made to wait another full gap merely because Luna was busy.
+- Preserve original IDs, source/author, timestamp, conversation scope and ingestion order. Never treat an unauthenticated source string as permission to cross private channels.
+- Support bounded overload and explicit rejection/backpressure; preserve accepted messages under cancellation, shutdown and late backlog. Duplicate input must not create another canonical turn.
+- Keep `drain_nowait()` and a future `steer()` seam, matching BEA's ability to observe mid-turn arrivals. The first accepted slice **queues** such inputs instead of cancelling the current reply.
 
-ProjectBEA's attention layer *ranks* every meaningful batch; it does not by itself prevent cloud-model inference on each significant update. For Luna we need a tiny second decision:
+Experimental starting points: `live_gap=0.30 s`, `text_gap=1.20 s`, `max_window=3.0 s`, `max_pending=256`. These are Liac test settings, not claims about upstream BEA defaults or measured latency. Send in Electron is a **finalized utterance**, not an instruction to close the entire quiet-gap batch immediately.
 
-`wake(batch, recent_activity, current_state) -> bool`
+### 5.2 Attention [AFTER FIRST LOOP]
 
-First rules: direct addressed input wakes; repeated image/game state and periodic heartbeats do not; exceptional high-salience events can wake with a cooldown. Do not wake Luna just because a sensor polled. Do not use a second LLM to decide when to call the first.
+BEA [`attention/gate.py`](https://github.com/emqnuele/projectBEA/blob/main/src/core/attention/gate.py) **prioritizes** all meaningful perceptions; it does not perform an arbitrary threshold drop. Adapt its deterministic scoring, addressed-input, follow-up, activity and cooldown logic after the first loop works, initially with only actual supported local text input.
 
-### 5.3 Attention [NEW M6.1]
+### 5.3 Admission [AFTER ATTENTION]
 
-`annotate(batch) -> priority-ordered observations` should be pure/deterministic where possible. Direct address and relevant follow-up rank first. Other meaningful perceptions rank by change, salience, recency and simple cooldown. Attention does not author jokes, emotions or opinions.
+LilavelStage's separate `AdmissionPolicy` decides whether inference is allowed, with explicit decisions/reasons, conversation-scoped neighbors and safe defaults. A direct finalized local utterance is admitted in the first text-only slice. Do not silently discard user direct input or combine private conversation scopes. Preserve rejected input according to explicit data-retention rules; never conflate "not admitted to LLM" with "never received". Do not add Discord mention/fuzzy-name rules until a real multi-party adapter exists.
 
-**Luna may choose to stay silent even after a wake.** The wake gate controls cost and scheduling; the model controls the response.
+### 5.4 Future ambient/silent context [DEFERRED]
 
-### 5.4 Live State [NEW M6.1]
+The future requirement remains: a real VLM/game/system observation may update bounded live context **without a Luna call**; unusual events may later trigger Admission. `stay_silent()` is different – it requires running Luna. Do **not** implement speculative `LiveState`, fake scene feeds, generic wake heuristics, or periodic cloud inference during the rewrite without a real producer. Preserve only a clean extension boundary.
 
-Volatile values (current window, room, game position, visual scene) **replace** their prior value and expire. A meaningful transition is an event; a repeated snapshot is state. Do not append every sampled snapshot to the long-term model history. Put a short bounded state block in the next frame, without altering an already running frame.
+## 6. Single Consciousness Loop and tools
 
-## 6. Single Mind turn lifecycle [NEW M6.0]
+**Replace M6.0's supersession-by-default scheduling with an adapted ProjectBEA loop.** Read `Consciousness.run()`, `_run_turn()`, `_turn()` and `_steering()` before implementing. Do not copy the entire ProjectBEA application or introduce a second model.
 
-Implement one small `SingleMind`-like coordinator; do not copy Bea's entire `Consciousness` class.
+1. The one loop awaits a settled batch from the shared Bus. Accepted perceptions are committed with original provenance to the canonical Journal before an Admission decision.
+2. Attention ranks; Admission either permits a cognitive turn or records why it did not. In the first slice all valid local direct text is admitted; no real ambient source exists yet.
+3. Freeze a single coherent context frame from identity, canonical completed history and this batch. Call Luna using the M6.0 bridge/`SingleMindPort`.
+4. Only explicit tool calls authorize effects. `speak(message)` or `stay_silent()` end the basic text turn. The model's free-form text is private, not public output. Stream provisional speech fragments via existing `RuntimeOutput` and commit only complete validated decisions.
+5. Await the current turn before consuming the next settled batch. New inputs arriving during inference remain queued; they are **not lost and do not cancel** the active ordinary text turn.
+6. On failure, interruption, shutdown or restart, settle or explicitly account for accepted inputs without fabricated success or duplicate speech.
 
-1. Receive one settled batch and commit accepted inputs through the existing Journal.
-2. Apply Wake/Attention; ambient-only non-waking input may update live state without inference.
-3. Freeze a frame: static identity, canonical dialogue, relevant context, live state, current perceptions and their routes.
-4. Call Luna through a narrow streaming transport. Model plain text is **not audible speech**. Only `speak(message)` is speech; `stay_silent()` is explicit silence.
-5. Run a short bounded model/tool loop. An actual tool result may justify a follow-up model step; an audience-reaching `speak` or silence should end the turn.
-6. Record completed actions, delivery state and results; resolve the turn. Newer turns may cancel/supersede older output.
+### 6.1 Steering and voice restart [SECONDARY SLICE]
 
-Start with `speak` and `stay_silent`. `send_message`, game actions and free-form tools are later capabilities. Avoid generalized multi-tool orchestration, elaborate rescue steps and mid-stream steering until a real scenario requires them.
+BEA `steer()`/mid-turn perceptions are part of the target adaptation. Study and implement them **after** the serialized normal loop passes acceptance. Text arriving during a single terminal `speak` is queued for a later turn; do not restart every request. A BEA-style restart is permitted only before outward speech/actions and only if all earlier perceptions are restored into the new frame. Multi-step tool results may justify another Luna step under a clear bound.
 
-**Only complete, validated arguments may execute side-effecting tools.** Future speech can speculatively stream already decoded `speak.message` fragments to TTS, but arbitrary actions cannot execute based on partial JSON.
+### 6.2 Tools and authority [LATER SLICE]
 
-### 6.1 Tool-aware history
+Retain the M6.0 `MindDecision`, `speak`/`stay_silent` and streaming contract. Adapt BEA's tool registry/lifecycle and LilavelStage `TurnAuthority` **when the first external effect is enabled**. Runtime alone validates exact destination, actor scope, arguments, execution result and acknowledgement. Confirmed outward effects become canonical history; private model prose, failed or unknown effects are not represented as delivered speech.
 
-Bea replays past spoken content as the actual `assistant → speak(args)` plus `tool → result` exchange. This matters: if past responses become plain assistant text, Luna may learn to output hidden prose instead of using `speak`.
+### 6.3 Tool-aware replay
 
-Adapt Liac's context projection accordingly. Derive deterministic call IDs from committed event/turn IDs. Capture whether text was sent, audio actually played, or output interrupted; don't invent successful speech on restart. Keep one canonical Journal; this is just a read projection.
+Replay prior completed `speak` as `assistant → tool call → tool outcome` when the chosen Luna transport supports it. Derive stable IDs from committed events. A cancelled/provisional fragment must never be recorded as successfully delivered. This is a Journal-derived context projection, not a second canonical log.
 
-### 6.2 Multi-channel routing [FUTURE]
+## 7. Context, memory and experience
 
-One character, one awareness context, but explicit destinations. A future `send_message(platform, channel, text)` needs validated output routes and privacy scopes. Input text cannot change its own platform permissions. Do not build a full routing framework before adding a real second surface.
+**One mind and one canonical event history.** Journal stores accepted input and confirmed actions. The model sees a bounded *projection* of history, not automatically every Journal row.
 
-## 7. Context, memory and handoff
+**Context assembly order:**
 
-**One assembled conversation**, not Luna's supervisor history and Bolt's separate 16K context. Recommended order:
+1. Stable character identity and concise tool instructions.
+2. Complete replay of confirmed dialogue and tool outcomes.
+3. Bounded optional context (person/roster, unresolved threads, due intentions and later real live state).
+4. Ordered perceptions for the current batch, with source/provenance.
 
-1. Static identity/persona and concise tool instructions.
-2. Stable replay of actual completed dialogue and tool results.
-3. Compact dynamic briefing: remembered experience if available, people/route, live state.
-4. This turn's ordered perceptions with provenance.
+Adapt BEA's `SingleContext`/token-budget/handoff **behavior** and preserve M4.8's frozen frame, whole-turn Hot/Cold separation and recovery guarantees. Do not copy an unrelated SQLite or vector database wholesale. Any persisted domain records must have explicit ownership and must not compete with the Journal as the authoritative record of what actually occurred.
 
-Cache-friendly prompt order is useful but not a reason to add abstractions. Compare complete valid prompts, and do **not** call a stable byte prefix a proven provider cache hit without actual counters.
+### 7.1 Person and social memory [FUTURE, REQUIRED SCOPE]
 
-**Adapt M4.8 rather than porting another memory engine:**
+Adapt BEA roster/person-card mechanisms for stable identities, exact participant scopes and bounded prompt retrieval. LilavelStage's Person Memory is a secondary comparison. Introduce it only alongside real multi-user input or a proven need; keep separate records for user facts, character statements and uncertain observations.
 
-- Journal is always canonical. Summaries are replaceable projections.
-- Cold stops before Hot whole-turn suffix. The old 1024-token target was for local Fast; choose new thresholds only after measuring Luna's real available context.
-- Snapshot cutoff is frozen; events arriving during consolidation remain verbatim after it.
-- Late/failed summaries never erase new history or in-progress speech. Budget fallback and later recovery are separate.
-- Do not copy Bea's extra mutable context store, diary DB or vector index.
-- Keep consolidation outside the speaking critical path. First try idle-time work with the available Luna transport; only introduce background model usage when contention is actually measured.
+### 7.2 Agenda and Open Threads [FUTURE, REQUIRED SCOPE]
 
-If retrieval is added later, separate **user claims**, **character fiction/claims**, **tool observations** and **uncertain inferences**. Privacy scope and source attribution matter more than elaborate scoring.
+Adapt BEA `social/agenda.py` and rhythm queueing, plus LilavelStage's explicit Open Threads lifecycle (`OPEN`, `RESOLVED`, `CANCELLED`). Due intentions enter the **same PerceptionBus** with trusted runtime provenance; they do not bypass the loop, grant arbitrary external authority or create another mind. Use bounded stores/queries, not automatic all-history injection.
+
+### 7.3 Spontaneous presence [FUTURE, REQUIRED SCOPE]
+
+Adapt BEA `mind/spontaneous.py` and `social/rhythm.py`, comparing LilavelStage's opt-in A0. Initiation requires explicit enabled policy, cooldown, activity and safe output scope. No separate monologue worker invoking a second cognitive engine.
+
+### 7.4 Explicit exclusion: Shadow Memory [NEVER PORT]
+
+Do not transplant LilavelStage's Shadow Memory, shadow `ExperiencePacket` proposer/verifier pipeline, background reflection, shadow retrieval/M3/M4 bridge or its semantic index. Person Memory, Agenda and Open Threads are **not** Shadow Memory and remain in scope for later dedicated stages. No automatic background model service is implied by this Blueprint.
+
+Keep context/privacy scopes strict and consolidation off the speaking critical path. Character quality and continuity require live evaluation, not just schema checks.
 
 ## 8. GPT-6 Luna and transport
 
-**EXPERIMENT:** `openai-codex/gpt-6-luna` with reasoning `low` first; try `off` / `none` only if the **specific selected transport and model** report support. Do not assume a generic OpenAI API capability is present on the Codex route.
+**M6.0 baseline:** the implemented experimental path uses a Bun/`pi-ai` bridge with Codex OAuth, `LunaStream`, `SingleMindPort` and streaming tool-call deltas. Reuse it in the Perception Loop rewrite; do not switch to direct API, OMP, or a second model as part of batching work.
 
-M5.0's OMP RPC `prompt_and_wait()` served asynchronous Deep tasks but is insufficient evidence of early streaming tool arguments. Evaluate the **transport**, not just the model:
+The initial model/reasoning pair is GPT-6 Luna `low`. Validate provider-supported reasoning modes rather than assuming `off` is supported. Model plain text is not public speech; `speak` and `stay_silent` remain the decisions. Provisional `speak.message` fragments stream but do not authorize arbitrary side-effecting tools.
 
-- Stream `speak.message` tool-argument deltas and text with timestamps, and support cancellation.
-- Control the actual model/system prompt; minimize coding-agent wrapper instructions.
-- Use a supported authentication flow; do not assume a ChatGPT subscription is a direct API key.
-- Record requested and observable reasoning mode, model ID, latency, token usage and errors.
-- Prefer one tiny production transport adapter. A bridge based on `pi-ai` is a candidate, not an automatic dependency; OMP may stay if it passes the same tests.
+Measure separately: queue/settle time, context assembly, provider first event, first tool delta, first usable speech fragment, bridge completion and Runtime completion. An end-to-end 3-second completion is **not** first-token latency; report actual measured points only. Benchmark the rewritten loop and direct M6.0 bridge with equivalent prompts/tools and warm/cold conditions before claiming latency regressions.
 
-**First proof:** real `low` Luna tool call → discover supported reasoning levels → compare `off` if available → inspect streamed tool deltas and cancellation → measure first usable fragment. Do not build a complete provider SDK or TTS pipeline before that proof.
+Do not allow provider changes to obscure the first ProjectBEA-equivalence test.
 
 ## 9. Vision and real sensors [NEW M6.2]
 
@@ -223,88 +215,122 @@ Borrow from Bea's `JsonFieldStream`, `SpeechChunker` and `LiveLine` mechanics:
 
 Measure the whole chain: settled input → first model/tool delta → first usable `speak` fragment → first audio chunk → **first audible sound**. Streaming does not remove any long reasoning pause before the first visible delta.
 
-## 11. Actions and game adapters [FUTURE M6.4+]
+## 11. External actions, adapters and authority [FUTURE]
 
-Available tools should correspond to real enabled capabilities; don't tell Luna a tool exists if the runtime cannot execute it. Begin with two speech/silence tools. Add one external tool only after the main loop is stable.
+External capabilities must be explicit, actually available and scoped to the current turn. BEA's tool action lifecycle is the primary reference; LilavelStage's `TurnAuthority` is the safety reference for Discord/multi-channel actions.
 
-All effects pass through Runtime: validate arguments used, permission and destination; execute; record success/failure; emit tool outcome as Perception. Coarse game goals may use deterministic controllers. No direct shell or unscoped desktop control. Loonyball, Discord, OBS and game control remain optional future integrations.
+- Validate actor, allowed destination, arguments and effect result before recording delivery.
+- Do not derive permissions from user prompt content, traces, untrusted observation text or memory.
+- Confirm only actually delivered effects in canonical history; preserve failed/unknown outcomes distinctly.
+- A later tool result may enter the shared Bus as a perception or follow-up step; never create a separate model loop.
+- Game/OBS/Loonyball/Discord remain separate adapters, added only when actually integrated; no unrestricted shell/desktop authority.
+
+No speculative generic plugin framework is required.
 
 ## 12. Concurrency, failure and lifecycle
 
-The Perception Bus and Runtime are owned by one asyncio event loop; cross-thread producers must marshal to it. A slow sensor/tool/consolidation task cannot block the character event loop.
+One asyncio owner controls the Bus, serialized cognitive loop, Journal and runtime state. Adapter I/O, slow sensors, trace sinks and future TTS must never block normal intake. Cross-thread producers marshal to this loop.
 
 **Mandatory invariants:**
 
-- Accepted canonical events are atomic, idempotent and recoverable. Retry does not repeat an already committed character response.
-- Stale generation, summary or tool result cannot overwrite newer state or play audio after supersession.
-- Tools cannot execute unauthorized external effects based on model text or untrusted sensor content.
-- Bounded pending work protects against runaway queues and stale vision/audio.
-- Context handoff preserves raw Hot turns and immutable in-flight frames.
+- Multiple quick direct messages can become **one batch/one Luna call**; a Send press or STT final is not an automatic batch flush.
+- No new direct input mechanically cancels an ordinary active text turn. Backlogged messages are retained, with original arrival timestamps and bounded capacity.
+- Queue acceptance is not Journal durability. After drain, runtime owns committing, retry/error settlement and no-double-speech recovery.
+- Canonical event IDs and complete turn ordering are stable; shutdown and restart produce no fabricated deliveries.
+- Only Runtime can authorize and execute external effects. Streaming provisional output is not a committed action.
+- No observer, debug dashboard, trace subscriber or memory projection changes model decisions or outward actions.
+- Untrusted source/channel text never crosses authorized conversation scopes.
+- A real future ambient update does not change an already frozen model context.
 
-Avoid repeating these validations in every layer. Put each at the **single boundary that owns it**. Shutdown stops new inputs, settles or explicitly cancels accepted work, flushes Journal and closes owned transports. Never invent a successful answer after restart.
+When BEA safe restart/steering is later added, cancellation must be conditional on **no outward side effects** and must restore all unconsumed perceptions. Do not apply blanket `_cancel_active('superseded')` at intake.
 
 ## 13. Acceptance and measurement
 
-A fake-backed test is not a provider benchmark. Report separately: unit tests, offline integration, real Luna, real VLM, audible TTS and human evaluation. Do not add broad testing scaffolding just because a hypothetical fault exists.
+**Phase 1 is not accepted until these deterministic fake-backed scenarios pass:**
 
-**Focused regression scenarios:**
+| Scenario | Required result |
+| --- | --- |
+| A/B/C at 0.0/0.4/0.8s | One settled batch containing 3 inputs, one context, one Luna call |
+| Quiet gap expires | Messages outside the gap become distinct batches |
+| Continuous messages | Hard `max_window` closes batches rather than starving inference |
+| A is generating; B/C arrive | A completes normally, B/C retained and grouped for next turn, no implicit supersession |
+| Late drained backlog | Ingress timestamps respected; no extra full quiet-gap wait |
+| Mixed authorized sources / multiple keys | Stable order, correct privacy scope, no silent cross-channel mixing |
+| Duplicate/retry/overload/shutdown | No lost accepted input or duplicate confirmed response; explicit rejection and recovery |
+| `speak`/`stay_silent`, partial streaming, provider error | Correct terminal settlement and canonical history |
 
-- Close messages → one batch, one canonical input, one cognitive turn; retry/restart no duplicate speech.
-- Noise or unchanged state → no Luna call; meaningful perception → correct frame.
-- `speak` and `stay_silent` outcomes → correct tool-aware replay.
-- Cancellation and late tool results → no stale output or unsafe effect.
-- Hot/Cold handoff → no raw input loss or misordered history.
-- One actual live request through selected transport with matching model and reasoning options.
+After fake tests, run a real GPT-6 Luna LOW smoke test using the existing Codex bridge. State observed outputs, model calls and timings; do not call synthetic tests live evidence. Test later Attention/Admission (addressing, follow-up, rejected events), steering/restart, memory tools, spontaneous rhythm and Trace separately.
 
-**Real metrics:** p50/p95 first model/tool delta; first usable speech fragment; first **audible sound**; full turn duration; inference steps and tokens; ambient false-wake frequency; cancellation and duplicate rate; memory continuity and character quality. Do not claim a cache hit without provider-side evidence. A ~2–3-second median first-audio target may guide evaluation, **not** serve as an unverified guarantee.
+**Trace must show** input ID/source, arrival, queue size, batch membership/close reason, Attention score, Admission verdict, turn ID, provider timing, tool decision, terminal outcome and causal links when those components exist. Log bounded diagnostic information; never leak tokens, credentials, private prompt content or uncensored transcripts by default.
 
-A pre-existing desktop regression, `MainWindow.context` missing in `test_desktop.WindowTests.test_chat_context_selection_and_offline_history`, remains outside this architectural change unless separately fixed.
+**Latency metrics:** provider first event vs first tool delta vs first usable speech vs complete runtime turn, with p50/p95 over enough comparable warmed trials. End-to-end voice work also measures first audible sound; do not claim an unmeasured result. Keep the pre-existing PySide6 `MainWindow.context` regression outside this architecture rewrite unless separately fixed.
 
-## 14. Milestones
+## 14. Milestones and mandatory sequencing
 
-| Phase | Minimal slice | Exit evidence |
+| Phase | Scope | Exit evidence |
 | --- | --- | --- |
-| **M0–M5.0** | Original Bolt/Luna architecture; M4.8; M5.0 Perception Bus | **IMPLEMENTED**, offline evidence in reports; baseline retained |
-| **M6.0** | Single Luna `low`; capability probe for `off`; small tool-call mind loop; streaming proof | Real model can `speak` or remain silent, tool deltas and latency measured |
-| **M6.1** | Wake/Attention; one context; tool-aware replay; live state; adapted M4.8 | Synthetic perceptions and long conversation without ambient inference spam |
-| **M6.2** | One window/screen adapter with chosen VLM | Real scene change enters context, no runaway VLM requests |
-| **M6.3** | Streaming TTS and interruption; first-audio benchmark | Actual end-to-end latency and naturalness evaluated |
-| **M6.4** | Keep/adjust Single Mind based on evidence; first permitted external action | A conscious decision supported by measurements; one action result observed |
-| **Later** | Voice/STT, Discord, Loonyball/avatar, richer game tools and memory retrieval | Independent vertical slices |
+| **M0–M5.0** | Legacy Fast/Deep implementation | Historical baseline, preserve unchanged |
+| **M6.0** | Single Luna model port, bridge, explicit speech/silence, streaming and SQLite Journal | **IMPLEMENTED on isolated branch**, baseline for rewrite; not proof of correct scheduling |
+| **M6.1a – BEA Perception Loop** | New branch from M6.0; BEA-like `put/drain/settle`, quiet-gap windows, one awaited `Consciousness` loop, queued mid-turn input | Burst/busy-turn/backlog/failure tests + Luna live smoke |
+| **M6.1b – Attention + Admission** | BEA deterministic ranking/follow-up + separate LilavelStage Admission, with scoped and auditable decisions | Admitted/rejected text tests; no silent loss or extra calls |
+| **M6.1c – Steering + tools** | BEA mid-turn steering and conditional safe restart; bounded multi-step tool lifecycle; scoped authority for real effects | Controlled restart only before effects; replay and permission tests |
+| **M6.1d – Experience and rhythm** | BEA/Lilavel person memory, Agenda, Open Threads, spontaneous presence, context/handoff | Independent lifecycle/retrieval/permission tests; no Shadow Memory |
+| **M6.1e – Observability + Electron** | LilavelStage-style TraceBus, BEA turn diagnostics, Electron Trace Explorer with live stream, filtering/replay and typed finalized-STT simulator | Exact turn trace, replay, context inspection and same-Bus chat tests |
+| **M6.2** | One real screen/VLM or structured game adapter, then bounded silent LiveState | Verified real observations update next context without spurious inference |
+| **M6.3** | Real STT and streaming TTS, interruption, avatar expression | Recorded real first-audio delay, transcript and barge-in behavior |
+| **Later** | Discord/OBS/Loonyball/game integrations and measured refinement | Per-adapter evidence; nothing bypasses shared Bus/authority |
 
-If the one-model approach is too slow, first test transport, prompt, cache and reasoning settings before restoring a two-model architecture. Keep the old system available for a measured comparison.
+This table is a **roadmap**, not a demand to implement all phases in one PR. The first agent task is **M6.1a only**, with a mapping table `ProjectBEA source → Liac target → intentional deviation`. After a successful first slice, refine upstream behavior in *separate* measured PRs.
+
+**No first-slice implementation** of synthetic ambient observations, LiveState, VLM, game events, STT, Electron, Shadow Memory or generic optimizations. Build only the real contracts necessary for correct text intake and model execution.
 
 ## 15. Code layout and boundaries
 
-| Area | Role |
+| Area | Ownership |
 | --- | --- |
-| `contracts/` | Small immutable data/port interfaces |
-| `runtime/perception_bus.py` | Existing bounded ephemeral event intake |
-| `runtime/journal.py` | Canonical SQLite history; transactions, replay |
-| `context.py` | Deterministic window and tool-aware prompt projection |
-| Future single-mind coordinator under `runtime/` | One cognitive turn, wake, tool execution, cancellation |
-| `minds/` or one focused adapter | Luna streaming transport, model/reasoning config |
-| Future `sensors/` | Screen/VLM, game, audio input; no decisions |
-| Future `expression/` | Chunking, one TTS engine, playback |
-| `app.py` | Dependency wiring only |
-| `tests/` | Critical integration/regression tests, not coverage theater |
+| `contracts/` | Immutable Perception, event, model and output contracts |
+| `runtime/perception_bus.py` | Single bounded intake, BEA-compatible settling, dedupe and backpressure |
+| New focused `runtime/` loop module | Only owner of batch admission and serialized Luna turns |
+| `runtime/journal.py` | One canonical SQLite event history and transactional replay |
+| `minds/`, `tools/luna-bridge/` | Existing M6.0 Luna and fake streaming adapters |
+| Context projection | Stable frame, whole-turn history and tool-aware replay |
+| Future `attention/` or focused runtime modules | BEA scoring, LilavelStage Admission; no second mind |
+| Future `memory/` | Bounded person/roster, Agenda and Open Threads records; never Shadow Memory |
+| Future `trace/` | Typed diagnostic TraceBus, ring buffers, subscriber isolation, optional private JSONL/replay |
+| Future `hub/` | Electron React Trace Explorer and finalized-utterance test input; no parallel model path |
+| Future `sensors/`, `expression/` | Real STT/VLM/game event input and TTS/avatar output |
+| `tests/` | Deterministic edge/behavioral integration, with honest separate live evidence |
 
-Keep the Python modular monolith and minimize added dependencies. Never alter Loonyball or deploy as an implicit part of Blueprint work. A M6 PR should change only the smallest relevant modules.
+Keep Python as a modular monolith. In particular, **LilavelStage's TUI is not the planned interface**: borrow its TraceBus, structured events, SSE/observer semantics and browser Trace Explorer concepts, but display diagnostics in Electron.
+
+The Electron Trace Explorer should offer Overview, Mind/Context, Trace Timeline, Models/latency, Memory and Runtime. Required trace interactions: filter/search, replay/pause/step, full event JSON, linked input→batch→turn→tool chain, exact compiled-frame inspection (local opt-in with privacy bounds), exportable private snapshot. Connect to typed runtime events, not parsed stdout; snapshots recover UI state, streaming events drive live updates. Its Chat composer must publish the same finalized speech perception future STT does.
+
+Never give tracing or UI observers control over tool authority or canonical history merely by viewing events.
 
 ## 16. Open questions and references
 
-Open until actual live verification: whether Codex Luna accepts `off`, how much agent-prompt overhead OMP adds on the provider-facing side, whether incremental function-call arguments are exposed, first-audio latency under perception load, usable VLM latency/VRAM, and how to schedule compaction without competing with live replies.
+Open empirical questions: ProjectBEA-equivalent quiet-gap performance with Luna, mid-turn text vs. voice semantics, safe steering/cancellation, upstream context-window handoff compatibility, Codex provider first-event latency, future voice first-audio delay, real VLM performance and bounded memory lifetime. No claims of complete live integration until measured.
 
-Upstream code review pinned to [`ProjectBEA@f2186fc`](https://github.com/emqnuele/projectBEA/tree/f2186fc647db3f9ae65e6463b9f82c882bdca68b):
+### Primary: ProjectBEA
 
-- [Consciousness](https://github.com/emqnuele/projectBEA/blob/f2186fc647db3f9ae65e6463b9f82c882bdca68b/src/core/consciousness.py) – one turn loop and tool outcomes.
-- [Attention rules](https://github.com/emqnuele/projectBEA/blob/f2186fc647db3f9ae65e6463b9f82c882bdca68b/src/core/attention/rules.py) and [gate](https://github.com/emqnuele/projectBEA/blob/f2186fc647db3f9ae65e6463b9f82c882bdca68b/src/core/attention/gate.py) – salience, addressed input and ranking.
-- [SingleContext](https://github.com/emqnuele/projectBEA/blob/f2186fc647db3f9ae65e6463b9f82c882bdca68b/src/core/mind/single_context.py) and [Handoff](https://github.com/emqnuele/projectBEA/blob/f2186fc647db3f9ae65e6463b9f82c882bdca68b/src/core/mind/handoff.py) – canonical replay and background recap.
-- [Streaming tool parser](https://github.com/emqnuele/projectBEA/blob/f2186fc647db3f9ae65e6463b9f82c882bdca68b/src/core/agent/streaming.py), [LiveLine](https://github.com/emqnuele/projectBEA/blob/f2186fc647db3f9ae65e6463b9f82c882bdca68b/src/core/expression/live.py) – speculative speech and cancellation.
-- [Minecraft surface](https://github.com/emqnuele/projectBEA/blob/f2186fc647db3f9ae65e6463b9f82c882bdca68b/src/core/skills/minecraft/surface.py) – structured event versus live state, **not** a generic VLM sensor.
+- [PerceptionBus](https://github.com/emqnuele/projectBEA/blob/main/src/core/perception/bus.py), [types](https://github.com/emqnuele/projectBEA/blob/main/src/core/perception/types.py) – queue, settle, backlog and text/live gap semantics.
+- [Consciousness](https://github.com/emqnuele/projectBEA/blob/main/src/core/consciousness.py) – one loop, steering and tool effects.
+- [Attention rules](https://github.com/emqnuele/projectBEA/blob/main/src/core/attention/rules.py), [gate](https://github.com/emqnuele/projectBEA/blob/main/src/core/attention/gate.py) – addressed/follow-up/priority **without a model admission threshold**.
+- [SingleContext](https://github.com/emqnuele/projectBEA/blob/main/src/core/mind/single_context.py), [handoff](https://github.com/emqnuele/projectBEA/blob/main/src/core/mind/handoff.py), [turn logs](https://github.com/emqnuele/projectBEA/blob/main/src/core/mind/turnlog.py) – stable replay and diagnostics.
+- [Tool lifecycle](https://github.com/emqnuele/projectBEA/blob/main/src/core/mind/tools.py), [memory store](https://github.com/emqnuele/projectBEA/blob/main/src/core/memory/store.py), [Agenda](https://github.com/emqnuele/projectBEA/blob/main/src/core/social/agenda.py), [SpontaneousPresence](https://github.com/emqnuele/projectBEA/blob/main/src/core/mind/spontaneous.py) and [Rhythm](https://github.com/emqnuele/projectBEA/blob/main/src/core/social/rhythm.py).
+- [EventManager](https://github.com/emqnuele/projectBEA/blob/main/src/core/events.py), [streaming tool decoder](https://github.com/emqnuele/projectBEA/blob/main/src/core/agent/streaming.py), [LiveLine](https://github.com/emqnuele/projectBEA/blob/main/src/core/expression/live.py).
 
-These are behavioral references, not automatic dependencies. If upstream source is copied, preserve applicable MIT license/copyright notices. Historical records: [M5.0 baseline Blueprint](https://github.com/softsock/liac-ai/blob/7510227dcb21212c607532150b864ff7757476ce/docs/PROJECT_BLUEPRINT.md), [M5.0 report](M5_0_PERCEPTION_BUS.md), [M4.8 report](M4_8_CONTEXT_HANDOFF.md).
+### Secondary: LilavelStage
+
+- [PerceptionBus](https://github.com/SheetHappiness/LilavelStage/blob/master/src/lilavel_stage/bus.py) – historical fixed-window reference only.
+- [StageLoop](https://github.com/SheetHappiness/LilavelStage/blob/master/src/lilavel_stage/stage_loop.py) and [behavioral contract](https://github.com/SheetHappiness/LilavelStage/blob/master/BEHAVIOR.md) – scoped admission, action/outcome history and steering comparisons; do not transplant the 2,100-line loop.
+- [Attention/Admission](https://github.com/SheetHappiness/LilavelStage/tree/master/src/lilavel_stage/attention), [Open Threads](https://github.com/SheetHappiness/LilavelStage/blob/master/src/lilavel_stage/open_threads.py), [Agenda](https://github.com/SheetHappiness/LilavelStage/blob/master/src/lilavel_stage/agenda.py), [TurnAuthority](https://github.com/SheetHappiness/LilavelStage/blob/master/src/lilavel_stage/authority.py).
+- [TraceBus](https://github.com/SheetHappiness/LilavelStage/blob/master/src/lilavel_stage/trace.py), [browser trace console](https://github.com/SheetHappiness/LilavelStage/tree/master/src/lilavel_stage/web_dashboard_assets) – target semantics for a new **Electron** inspector.
+- [Third-party notices](https://github.com/SheetHappiness/LilavelStage/blob/master/THIRD_PARTY_NOTICES.md) – prior BEA attribution and MIT adaptation precedent.
+
+Snapshot reference: old [ProjectBEA `f2186fc`](https://github.com/emqnuele/projectBEA/tree/f2186fc647db3f9ae65e6463b9f82c882bdca68b); pin the actual upstream SHA(s) read during the new adaptation. Historical local reports remain valid for their own branches, not for the M6.1 rewrite: [M5.0](M5_0_PERCEPTION_BUS.md), [M4.8](M4_8_CONTEXT_HANDOFF.md).
 
 ---
 
-**Direction:** Give Luna one world, one coherent history and a voice. Keep mechanisms small, necessary boundaries safe and model behavior measurable. **Single Mind stays EXPERIMENT until live evidence supports replacing M5.0.**
+**Direction:** Give Luna one world, one coherent context and one serialized mind. Reproduce ProjectBEA's intake and cognition behavior first; then add LilavelStage-style admission, capabilities, memory and an **Electron Trace Explorer** in separately verified slices. **No Shadow Memory.**
+
