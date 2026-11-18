@@ -20,7 +20,7 @@ class PerceptionBusTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual([p.perception_id for p in batch.items], ['1', '2', '3'])
         self.assertEqual(batch.closed_by, 'quiet')
 
-    async def test_stream_closes_at_first_arrival_ceiling(self):
+    async def test_stream_closes_at_settle_ceiling(self):
         bus = PerceptionBus(text_gap=.2, max_window=.12)
         await bus.publish(perception('0'))
         async def feed():
@@ -79,14 +79,31 @@ class PerceptionBusTests(unittest.IsolatedAsyncioTestCase):
         await asyncio.sleep(.12)
         self.assertEqual(len((await asyncio.wait_for(bus.drain(), .05)).items), 1)
 
-    async def test_backlog_keeps_expired_windows_separate(self):
-        bus = PerceptionBus(text_gap=.03)
+    async def test_aged_backlog_is_one_batch_even_across_historical_gaps(self):
+        bus = PerceptionBus(text_gap=.06, max_window=.10)
         await bus.publish(perception('old'))
-        await asyncio.sleep(.06)
+        await asyncio.sleep(.12)
         await bus.publish(perception('new'))
-        self.assertEqual([p.perception_id for p in (await bus.drain()).items], ['old'])
-        await bus.close()
-        self.assertEqual([p.perception_id for p in (await bus.drain()).items], ['new'])
+        await asyncio.sleep(.09)
+        batch = await asyncio.wait_for(bus.drain(), .04)
+        self.assertEqual([p.perception_id for p in batch.items], ['old', 'new'])
+        self.assertEqual(batch.closed_by, 'quiet')
+
+    async def test_steering_can_settle_text_or_take_available_items(self):
+        bus = PerceptionBus(text_gap=.09)
+        self.assertIsNone(await bus.steer(wait_for_typing=True))
+        await bus.publish(perception('text'))
+        waiting = asyncio.create_task(bus.steer(wait_for_typing=True))
+        await asyncio.sleep(.02)
+        self.assertFalse(waiting.done())
+        await bus.publish(perception('voice', kind='voice', delivery='ambient'))
+        batch = await asyncio.wait_for(waiting, .04)
+        self.assertEqual([p.perception_id for p in batch.items], ['text', 'voice'])
+        await bus.publish(perception('new'))
+        batch = bus.drain_nowait()
+        self.assertEqual(batch.closed_by, 'immediate')
+        self.assertEqual(batch.items[0].perception_id, 'new')
+        self.assertIsNone(bus.drain_nowait())
 
     async def test_duplicate_idempotent(self):
         bus = PerceptionBus(text_gap=0, max_pending=1)

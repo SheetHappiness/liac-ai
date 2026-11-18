@@ -1,8 +1,11 @@
 """Immutable adapter inputs; delivery classification is assigned by trusted callers."""
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from typing import Literal
+
+from vtuber.contracts.events import new_id
+
 
 type PerceptionKind = Literal['chat', 'voice', 'observation', 'state']
 type Delivery = Literal['direct', 'ambient', 'noise']
@@ -46,8 +49,11 @@ class PerceptionBatch:
     conversation_key: str
     items: tuple[Perception, ...]
     closed_by: Literal['quiet', 'max_window', 'immediate']
+    batch_id: str = field(default_factory=lambda: new_id('batch'), kw_only=True, compare=False)
 
     def __post_init__(self) -> None:
+        if not isinstance(self.batch_id, str) or not self.batch_id.strip():
+            raise ValueError('Batch ID must be nonempty')
         if not isinstance(self.conversation_key, str) or not self.conversation_key.strip():
             raise ValueError('Batch conversation key must be nonempty')
         if not isinstance(self.items, tuple) or not self.items or any(

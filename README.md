@@ -25,10 +25,24 @@ inputs and renders direct local chat into one canonical user turn and Fast reply
 Ambient inputs are audit-only; noise is discarded with diagnostic counts.
 The supported direct route is `kind='chat', source='local', conversation_key='local'`,
 with one author per batch. Other direct routes raise `ValueError`.
-Experimental defaults: live gap 0.30s, text gap 0.75s, max window 2.0s,
+Original M5.0 defaults: live gap 0.30s, text gap 0.75s, max window 2.0s,
 max pending 256. Queue acceptance is ephemeral, not a durable acknowledgement.
 CLI and desktop continue to submit ordinary single messages; batching is an
 explicit API for local callers. See [usage, verification and limits](docs/M5_0_PERCEPTION_BUS.md).
+
+## M6.1: Single Mind text console
+
+With the package installed, run `python -m vtuber.m6` for the offline fake.
+For GPT-6 Luna, use `python -m vtuber.m6 --backend luna --reasoning low` after
+setting up the pinned Bun bridge and Codex authentication. Pass `--bun PATH`
+to select a Bun executable and `--db PATH` for a separate conversation.
+See the [M6.1 report](docs/M6_1_BEA_PERCEPTION_REWRITE.md) for the run commands and verification.
+
+The text console settles each batch after 1.20 seconds of quiet with a 3.00-second
+cap while collecting. Input keeps queuing during generation. The next turn
+starts after the current terminal result commits. Use `/quit` or EOF to finish
+queued turns. Ctrl+C cancels the active turn and records queued input as cancelled.
+Optional `--trace` writes scheduling metadata to ignored `.data/traces/`.
 
 ## Run
 

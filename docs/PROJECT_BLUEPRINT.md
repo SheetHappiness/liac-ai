@@ -1,11 +1,11 @@
 # PROJECT BLUEPRINT – Liac Single Mind
 
-> **Status:** M6 Single Mind is an **EXPERIMENT**. It is a target design, **not** an implemented feature. M0–M5.0 remains the verified legacy baseline.
+> **Status:** M6 Single Mind is an opt-in **EXPERIMENT**. The text loop and its verification are recorded in the [M6.1 implementation report](M6_1_BEA_PERCEPTION_REWRITE.md). M0–M5.0 remains the legacy baseline.
 > **Updated:** 2026-11-18. **Version:** 0.2.
 > **Active development repository (new Single Mind):** [`SheetHappiness/liac-ai`](https://github.com/SheetHappiness/liac-ai). **Legacy system / backup:** [`softsock/liac-ai`](https://github.com/softsock/liac-ai).
 > **Shared M5.0 starting point:** [`7510227`](https://github.com/SheetHappiness/liac-ai/commit/7510227dcb21212c607532150b864ff7757476ce), including M5.0. **Reference:** [ProjectBEA `f2186fc`](https://github.com/emqnuele/projectBEA/tree/f2186fc647db3f9ae65e6463b9f82c882bdca68b).
 
-This is the **target architecture** for `SheetHappiness/liac-ai`, not an assertion that its current code has already changed. Legacy Fast/Deep decisions are superseded *for M6 design*, but remain documented in the [old Blueprint](https://github.com/softsock/liac-ai/blob/7510227dcb21212c607532150b864ff7757476ce/docs/PROJECT_BLUEPRINT.md) and individual implementation reports. Do not treat old decisions about Bolt, OMP Deep or initiative as requirements for M6.
+This document records the architecture and target capabilities for `SheetHappiness/liac-ai`. Legacy Fast/Deep decisions are superseded *for M6 design*, but remain documented in the [old Blueprint](https://github.com/softsock/liac-ai/blob/7510227dcb21212c607532150b864ff7757476ce/docs/PROJECT_BLUEPRINT.md) and individual implementation reports. Do not treat old decisions about Bolt, OMP Deep or initiative as requirements for M6.
 
 **Status vocabulary:** `IMPLEMENTED` – verified in repository; `DECIDED` – architectural direction; `EXPERIMENT` – needs evidence; `FUTURE` – do not implement yet. Agents should read root and scoped `AGENTS.md`, then only relevant Blueprint sections.
 
@@ -27,14 +27,14 @@ Quality must be demonstrated in live multi-turn behavior and real latency measur
 | --- | --- | --- |
 | M6-01 | Single GPT-6 Luna cognitive actor; no Bolt/Fast + Luna/Deep split | **EXPERIMENT** |
 | M6-02 | Try reasoning `low` first, then `off`/`none` only if the selected model and route support it | **EXPERIMENT** |
-| M6-03 | Preserve M5.0 Perception Bus and SQLite Journal as the foundation | **DECIDED** |
+| M6-03 | Adapt BEA settle semantics in the existing Perception Bus and use one SQLite Journal | **DECIDED** |
 | M6-04 | One serialized active cognitive turn, bounded tool steps | **DECIDED** |
 | M6-05 | Separate **Wake** (should Luna run?) from **Attention** (what is important?) | **DECIDED** |
 | M6-06 | Explicit `speak` / `stay_silent` tools; actions only through Runtime | **EXPERIMENT** |
 | M6-07 | Replay completed speech as tool calls and outcomes, not plain assistant text | **DECIDED** |
 | M6-08 | Adapt M4.8 Cold/Hot safety without copying Bea's separate storage/window system | **DECIDED** |
 | M6-09 | Prefer minimal streaming transport with explicit prompt control | **EXPERIMENT** |
-| M6-10 | Perception → Attention → VLM first, then TTS and real first-audio benchmark | **DECIDED** |
+| M6-10 | Validate the serial perception loop, then evaluate Attention, VLM and TTS | **DECIDED** |
 | M6-11 | Keep the code and checks as small as practical | **DECIDED** |
 
 ### 2.1 Minimalism and essential checks [DECIDED]
@@ -104,54 +104,51 @@ Keep working foundations, but do not contort the M6 single-mind design to preser
 
 ## 5. Perception and Attention
 
-### 5.1 Perception [KEEP M5.0]
+### 5.1 Perception [M6.1 **EXPERIMENT**]
 
-Current **EXPERIMENT** defaults: `live_gap=0.30s`, `text_gap=0.75s`, `max_window=2.0s`, `max_pending=256`. These are scheduling choices, not latency promises.
+Defaults are `live_gap=0.30s`, `text_gap=1.20s`, `max_window=3.00s` and `max_pending=256`. The shortest applicable gap runs from the latest ingress in the batch. The maximum window starts when the consumer opens the batch. Same-route entries already queued at that point settle together, including aged backlog.
 
 - Retain original source input ID, timestamp, author and route; **ingress** order, not sender timestamp, establishes order.
 - Direct messages are a clear response opportunity; ambient events may inform context; noise is ignored.
 - A group of closely arriving messages is one cognitive opportunity, while each raw message remains individually auditable.
-- Bus acceptance is not durable: Journal commit is. A consumer retains a drained batch until Runtime accepts it.
+- Runtime writes each drained batch into the Journal before inference. Orderly interruption records queued inputs as cancelled. Recovery after abrupt process death covers inputs already committed to the Journal.
 - One identity does not imply permission to leak one private channel into another.
 
-### 5.2 Wake [NEW M6.1]
+### 5.2 Wake [**FUTURE**]
 
-ProjectBEA's attention layer *ranks* every meaningful batch; it does not by itself prevent cloud-model inference on each significant update. For Luna we need a tiny second decision:
+ProjectBEA's attention layer ranks each meaningful batch. A separate decision governs whether Luna runs. In M6.1, every batch with fresh direct local chat runs once. A future wake policy can account for other signals.
 
 `wake(batch, recent_activity, current_state) -> bool`
 
 First rules: direct addressed input wakes; repeated image/game state and periodic heartbeats do not; exceptional high-salience events can wake with a cooldown. Do not wake Luna just because a sensor polled. Do not use a second LLM to decide when to call the first.
 
-### 5.3 Attention [NEW M6.1]
+### 5.3 Attention [**FUTURE**]
 
 `annotate(batch) -> priority-ordered observations` should be pure/deterministic where possible. Direct address and relevant follow-up rank first. Other meaningful perceptions rank by change, salience, recency and simple cooldown. Attention does not author jokes, emotions or opinions.
 
 **Luna may choose to stay silent even after a wake.** The wake gate controls cost and scheduling; the model controls the response.
 
-### 5.4 Live State [NEW M6.1]
+### 5.4 Live State [**FUTURE**]
 
 Volatile values (current window, room, game position, visual scene) **replace** their prior value and expire. A meaningful transition is an event; a repeated snapshot is state. Do not append every sampled snapshot to the long-term model history. Put a short bounded state block in the next frame, without altering an already running frame.
 
-## 6. Single Mind turn lifecycle [NEW M6.0]
+## 6. Single Mind turn lifecycle [M6.1 **EXPERIMENT**]
 
-Implement one small `SingleMind`-like coordinator; do not copy Bea's entire `Consciousness` class.
+One SingleMindRuntime loop owns model turns.
 
-1. Receive one settled batch and commit accepted inputs through the existing Journal.
-2. Apply Wake/Attention; ambient-only non-waking input may update live state without inference.
-3. Freeze a frame: static identity, canonical dialogue, relevant context, live state, current perceptions and their routes.
-4. Call Luna through a narrow streaming transport. Model plain text is **not audible speech**. Only `speak(message)` is speech; `stay_silent()` is explicit silence.
-5. Run a short bounded model/tool loop. An actual tool result may justify a follow-up model step; an audience-reaching `speak` or silence should end the turn.
-6. Record completed actions, delivery state and results; resolve the turn. Newer turns may cancel/supersede older output.
+1. Drain a same-route batch through the Perception Bus and atomically record its raw inputs and grouped canonical user input in SQLite.
+2. Keep ambient-only batches as audit events. A fresh direct input triggers one model turn.
+3. Compile one ordered user frame with provenance, the identity and bounded tool-aware replay.
+4. Await one Luna call through the streaming port. Only a valid terminal `speak` or `stay_silent` tool call can complete the turn. Speech deltas are provisional.
+5. Commit the terminal event before delivery. The bus continues accepting inputs during generation. The loop takes the next batch after the current terminal event commits.
 
-Start with `speak` and `stay_silent`. `send_message`, game actions and free-form tools are later capabilities. Avoid generalized multi-tool orchestration, elaborate rescue steps and mid-stream steering until a real scenario requires them.
-
-**Only complete, validated arguments may execute side-effecting tools.** Future speech can speculatively stream already decoded `speak.message` fragments to TTS, but arbitrary actions cannot execute based on partial JSON.
+Console EOF and `/quit` accept the remaining queue for normal generation. An interrupt cancels the active turn and records queued inputs without running the model. A future multi-step turn can use steering between steps. Voice restart requires a separate policy for continuation and external actions.
 
 ### 6.1 Tool-aware history
 
 Bea replays past spoken content as the actual `assistant → speak(args)` plus `tool → result` exchange. This matters: if past responses become plain assistant text, Luna may learn to output hidden prose instead of using `speak`.
 
-Adapt Liac's context projection accordingly. Derive deterministic call IDs from committed event/turn IDs. Capture whether text was sent, audio actually played, or output interrupted; don't invent successful speech on restart. Keep one canonical Journal; this is just a read projection.
+Liac projects the original tool call ID and terminal outcome from its canonical Journal. Legacy replies that predate tool decisions replay as plain text. Delivery and playback evidence will be separate records when those capabilities exist.
 
 ### 6.2 Multi-channel routing [FUTURE]
 
@@ -266,7 +263,7 @@ A pre-existing desktop regression, `MainWindow.context` missing in `test_desktop
 | --- | --- | --- |
 | **M0–M5.0** | Original Bolt/Luna architecture; M4.8; M5.0 Perception Bus | **IMPLEMENTED**, offline evidence in reports; baseline retained |
 | **M6.0** | Single Luna `low`; capability probe for `off`; small tool-call mind loop; streaming proof | Real model can `speak` or remain silent, tool deltas and latency measured |
-| **M6.1** | Wake/Attention; one context; tool-aware replay; live state; adapted M4.8 | Synthetic perceptions and long conversation without ambient inference spam |
+| **M6.1** | BEA-style perception batching and serial Luna turns; one frame per batch and tool-aware replay | Fake acceptance A–J and a real Luna smoke with queued input during inference |
 | **M6.2** | One window/screen adapter with chosen VLM | Real scene change enters context, no runaway VLM requests |
 | **M6.3** | Streaming TTS and interruption; first-audio benchmark | Actual end-to-end latency and naturalness evaluated |
 | **M6.4** | Keep/adjust Single Mind based on evidence; first permitted external action | A conscious decision supported by measurements; one action result observed |

@@ -11,7 +11,7 @@ from typing import Callable, Iterator
 
 from vtuber.contracts.events import CharacterId, CharacterInitiative, Event, UserMessage, canonical_json, utc_now
 from vtuber.contracts.context import CompactionProposal, CompactionResult, ContextEpoch, ContextItem
-from vtuber.contracts.perception import PerceptionBatch
+from vtuber.contracts.perception import Perception, PerceptionBatch
 from vtuber.contracts.state import CharacterState, FastSnapshot, NoteProposal, UpdateResult
 from vtuber.runtime.state import RevisionConflict, reduce_note
 from vtuber.contracts.deep import (CompactionInput, DeepRequest, DeepResult,
@@ -106,20 +106,44 @@ class Journal:
         with self._transaction():
             return tuple(self._append(event) for event in events)
 
-    def accept_local_perceptions(self, character_id: str, batch: PerceptionBatch) -> UserMessage | None:
+    @staticmethod
+    def _raw_perception(character_id: str, item: Perception) -> Event:
+        return Event.create(character_id, 'perception.received', asdict(item),
+                            event_id=item.perception_id, source=item.source, occurred_at=item.occurred_at)
+
+    @staticmethod
+    def _check_direct_route(item: Perception) -> None:
+        if (item.delivery == 'direct' and
+                (item.kind, item.source, item.conversation_key) != ('chat', 'local', 'local')):
+            raise ValueError('Direct perception requires the local chat route')
+
+    def is_new_perception(self, character_id: str, item: Perception) -> bool:
+        self._check_direct_route(item)
+        previous = self.get(item.perception_id)
+        if previous is None:
+            return True
+        # Reject conflicts at intake so unrelated inputs in the queue can still commit.
+        if replace(previous, sequence=0, recorded_at=None) != self._raw_perception(character_id, item):
+            raise EventConflict(f'event_id conflict: {item.perception_id}')
+        return False
+
+    def accept_local_perceptions(self, character_id: str, batch: PerceptionBatch, *,
+                                 grouped_frame: bool = False) -> UserMessage | None:
         direct = tuple(item for item in batch.items if item.delivery == 'direct')
-        if any(item.kind != 'chat' or item.source != 'local' or item.conversation_key != 'local'
-               for item in direct) or len({item.author_id for item in direct}) > 1:
+        for item in direct:
+            self._check_direct_route(item)
+        if not grouped_frame and len({item.author_id for item in direct}) > 1:
             raise ValueError('M5.0 supports only single-author direct chat on the local route')
-        raw = tuple(Event.create(character_id, 'perception.received', asdict(item),
-            event_id=item.perception_id, source=item.source, occurred_at=item.occurred_at)
-            for item in batch.items if item.delivery != 'noise')
+        raw = tuple(self._raw_perception(character_id, item)
+                    for item in batch.items if item.delivery != 'noise')
         with self._transaction():
             # Check every raw event for conflicts, including replays that produce no dialogue.
             new_direct = {}
             for item in direct:
                 if self.get(item.perception_id) is None:
                     new_direct.setdefault(item.perception_id, item)
+            fresh_ids = dict.fromkeys(event.event_id for event in raw
+                                      if grouped_frame and self.get(event.event_id) is None)
             for event in raw:
                 self._append(event)
             if not new_direct:
@@ -128,7 +152,12 @@ class Journal:
             message = UserMessage('\n'.join(item.content for item in new_direct.values()),
                 character_id, event_id='perception_group_' + digest, turn_id='perception_turn_' + digest,
                 occurred_at=next(iter(new_direct.values())).occurred_at)
-            self._append(message.as_event())
+            canonical = message.as_event()
+            if grouped_frame:
+                canonical = replace(canonical, payload_json=canonical_json({
+                    'text': message.text, 'batch_id': batch.batch_id, 'perception_ids': list(fresh_ids),
+                }))
+            self._append(canonical)
             return message
 
     def read(self, character_id: CharacterId, *, after: int = 0,

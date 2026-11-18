@@ -1,15 +1,17 @@
-"""Own one text turn at a time on the caller's asyncio loop."""
+"""Own one perception-driven text turn at a time."""
 
 import asyncio
 import logging
 from typing import Literal
 
-from vtuber.contracts.events import Event, RuntimeOutput, UserMessage
+from vtuber.contracts.events import Event, RuntimeOutput, UserMessage, utc_now
 from vtuber.contracts.mind import MindDecision, SingleMindPort
-from vtuber.contracts.perception import PerceptionBatch
+from vtuber.contracts.perception import Perception, PerceptionBatch
 from vtuber.contracts.protocols import OutputSink
+from vtuber.contracts.trace import TraceSink, emit_trace
 from vtuber.minds.m6_context import build_m6_messages
 from vtuber.runtime.journal import Journal
+from vtuber.runtime.perception_bus import PerceptionBus
 
 
 logger = logging.getLogger(__name__)
@@ -17,14 +19,16 @@ logger = logging.getLogger(__name__)
 
 class SingleMindRuntime:
     def __init__(self, character_id: str, journal: Journal, mind: SingleMindPort,
-                 output: OutputSink, *, identity: str) -> None:
+                 output: OutputSink, *, identity: str, bus: PerceptionBus | None = None,
+                 trace: TraceSink | None = None) -> None:
         self.character_id = character_id
         self.journal = journal
         self.mind = mind
         self.output = output
         self.identity = identity
-        self._input_lock = asyncio.Lock()
-        self._active: tuple[UserMessage, int, asyncio.Task[None]] | None = None
+        self.trace = trace
+        self.bus = bus if bus is not None else PerceptionBus(trace=trace)
+        self._owner: asyncio.Task[None] | None = None
         self._started = False
         self._closed = False
 
@@ -40,26 +44,97 @@ class SingleMindRuntime:
             self._finish(message, revision, 'reply.cancelled', {'reason': 'process_restarted'}, notify=False)
         self._started = True
 
-    async def submit_perceptions(self, batch: PerceptionBatch) -> asyncio.Task[None] | None:
-        async with self._input_lock:
-            if not self._started or self._closed:
-                raise RuntimeError('Single Mind is not accepting perceptions')
-            message = self.journal.accept_local_perceptions(self.character_id, batch)
-            if message is None:
-                return None
-            revision = self.journal.snapshot(self.character_id).revision
-            try:
-                await self._cancel_active('superseded')
-            except asyncio.CancelledError:
-                self._finish(message, revision, 'reply.cancelled', {'reason': 'submission_cancelled'})
+    async def publish(self, item: Perception) -> bool:
+        if not self._started or self._closed:
+            raise RuntimeError('Single Mind is not accepting perceptions')
+        if not isinstance(item, Perception):
+            raise ValueError('Expected a Perception')
+        if not self.journal.is_new_perception(self.character_id, item):
+            return False
+        return await self.bus.publish(item)
+
+    async def finish_input(self) -> None:
+        await self.bus.close()
+
+    async def run(self) -> None:
+        if not self._started or self._closed or self._owner is not None:
+            raise RuntimeError('Single Mind cannot start another loop')
+        self._owner = asyncio.current_task()
+        try:
+            while (batch := await self.bus.drain()) is not None:
+                message = self.journal.accept_local_perceptions(self.character_id, batch, grouped_frame=True)
+                if message is not None:
+                    await self._run_turn(message, batch)
+        except asyncio.CancelledError:
+            await self._flush_shutdown()
+            raise
+        finally:
+            self._owner = None
+
+    async def _run_turn(self, message: UserMessage, batch: PerceptionBatch) -> None:
+        revision = self.journal.snapshot(self.character_id).revision
+        started = self.journal.append(Event.create(self.character_id, 'character.reply.started',
+            {'snapshot_revision': revision}, event_id=f'reply_started_{message.event_id}',
+            turn_id=message.turn_id, causation_id=message.event_id))
+        emit_trace(self.trace, 'turn.started', batch.batch_id, batch_id=batch.batch_id,
+                   turn_id=message.turn_id, started_at=started.occurred_at)
+        self._emit(RuntimeOutput('reply.started', self.character_id, revision, message.turn_id))
+        task = asyncio.create_task(self._turn(message, batch, revision), name='single-mind-turn')
+        try:
+            decision = await asyncio.shield(task)
+        except asyncio.CancelledError:
+            owner = asyncio.current_task()
+            assert owner is not None
+            stopping = bool(owner.cancelling())
+            if stopping:
+                self._closed = True
+                task.cancel()
+                await asyncio.gather(task, return_exceptions=True)
+            self._finish(message, revision, 'reply.cancelled', {'reason': 'shutdown' if stopping else 'cancelled'},
+                         batch_id=batch.batch_id)
+            if stopping:
                 raise
-            dialogue = self.journal.recent_dialogue(self.character_id, limit=40)
-            self.journal.append(Event.create(self.character_id, 'character.reply.started',
-                {'snapshot_revision': revision}, event_id=f'reply_started_{message.event_id}',
-                turn_id=message.turn_id, causation_id=message.event_id))
-            task = asyncio.create_task(self._run(message, revision, dialogue), name='single-mind-turn')
-            self._active = message, revision, task
-            return task
+        except Exception as error:
+            self._finish(message, revision, 'reply.failed', {'reason': type(error).__name__},
+                         batch_id=batch.batch_id)
+        else:
+            self._finish(message, revision, 'reply.completed', {'text': decision.message,
+                'action': decision.action, 'tool_call_id': decision.tool_call_id}, batch_id=batch.batch_id)
+
+    async def _turn(self, message: UserMessage, batch: PerceptionBatch, revision: int) -> MindDecision:
+        task = asyncio.current_task()
+        assert task is not None
+        index = 0
+        streaming = True
+
+        def preview(text: str) -> None:
+            nonlocal index
+            if streaming and not task.cancelling() and text:
+                index += 1
+                self._emit(RuntimeOutput('reply.delta', self.character_id, revision, message.turn_id, text, index))
+
+        dialogue = self.journal.recent_dialogue(self.character_id, limit=40)
+        # A future attention pass can annotate the frame at projection time.
+        messages = build_m6_messages(self.identity, dialogue, lookup=self.journal.get)
+        emit_trace(self.trace, 'model.started', batch.batch_id, batch_id=batch.batch_id,
+                   turn_id=message.turn_id, started_at=utc_now())
+        status = 'failed'
+        action = None
+        try:
+            decision = await self.mind.generate(messages, on_speak_delta=preview)
+            if task.cancelling():
+                raise asyncio.CancelledError
+            if not isinstance(decision, MindDecision) or not decision.tool_call_id.strip():
+                raise ValueError('Expected one completed tool decision with an ID')
+            status, action = 'completed', decision.action
+            return decision
+        except asyncio.CancelledError:
+            status = 'cancelled'
+            raise
+        finally:
+            streaming = False
+            emit_trace(self.trace, 'model.completed', batch.batch_id, batch_id=batch.batch_id,
+                       turn_id=message.turn_id, ended_at=utc_now(), status=status, action=action)
 
     def _emit(self, output: RuntimeOutput) -> None:
         try:
@@ -69,63 +144,37 @@ class SingleMindRuntime:
 
     def _finish(self, message: UserMessage | Event, revision: int,
                 kind: Literal['reply.completed', 'reply.cancelled', 'reply.failed'],
-                payload: dict[str, str], *, notify: bool = True) -> None:
+                payload: dict[str, str], *, batch_id: str | None = None, notify: bool = True) -> None:
         event_id = f'reply_terminal_{message.event_id}'
         if self.journal.get(event_id) is not None:
             return
-        self.journal.append(Event.create(self.character_id, f'character.{kind}',
+        terminal = self.journal.append(Event.create(self.character_id, f'character.{kind}',
             {**payload, 'snapshot_revision': revision}, event_id=event_id,
             turn_id=message.turn_id, causation_id=message.event_id))
+        status = kind.removeprefix('reply.')
+        if batch_id is not None:
+            emit_trace(self.trace, 'turn.completed' if status == 'completed' else 'turn.failed', batch_id,
+                       batch_id=batch_id, turn_id=message.turn_id, ended_at=terminal.occurred_at,
+                       status=status, action=payload.get('action'), reason=payload.get('reason'))
         if notify:
             self._emit(RuntimeOutput(kind, self.character_id, revision, message.turn_id,
                                      payload['text'] if kind == 'reply.completed' else payload['reason']))
 
-    async def _run(self, message: UserMessage, revision: int, dialogue: tuple[Event, ...]) -> None:
-        task = asyncio.current_task()
-        assert task is not None
-        index = 0
-        streaming = True
-
-        def is_current() -> bool:
-            return self._active is not None and self._active[2] is task
-
-        def preview(text: str) -> None:
-            nonlocal index
-            if streaming and is_current() and not task.cancelling() and text:
-                index += 1
-                self._emit(RuntimeOutput('reply.delta', self.character_id, revision, message.turn_id, text, index))
-
-        self._emit(RuntimeOutput('reply.started', self.character_id, revision, message.turn_id))
-        try:
-            decision = await self.mind.generate(build_m6_messages(self.identity, dialogue), on_speak_delta=preview)
-            if not is_current() or task.cancelling():
-                raise asyncio.CancelledError
-            if not isinstance(decision, MindDecision) or not decision.tool_call_id.strip():
-                raise ValueError('Expected one completed tool decision with an ID')
-        except asyncio.CancelledError:
-            if is_current():
-                self._finish(message, revision, 'reply.cancelled', {'reason': 'cancelled'})
-            raise
-        except Exception as error:
-            if is_current():
-                self._finish(message, revision, 'reply.failed', {'reason': type(error).__name__})
-        else:
-            self._finish(message, revision, 'reply.completed', {'text': decision.message,
-                'action': decision.action, 'tool_call_id': decision.tool_call_id})
-        finally:
-            streaming = False
-
-    async def _cancel_active(self, reason: str) -> None:
-        if self._active is None:
-            return
-        (message, revision, task), self._active = self._active, None
-        task.cancel()
-        try:
-            self._finish(message, revision, 'reply.cancelled', {'reason': reason})
-        finally:
-            await asyncio.gather(task, return_exceptions=True)
+    async def _flush_shutdown(self) -> None:
+        self._closed = True
+        await self.bus.close()
+        while (batch := self.bus.drain_nowait()) is not None:
+            message = self.journal.accept_local_perceptions(self.character_id, batch, grouped_frame=True)
+            if message is not None:
+                revision = self.journal.snapshot(self.character_id).revision
+                self._finish(message, revision, 'reply.cancelled', {'reason': 'shutdown'}, batch_id=batch.batch_id)
 
     async def close(self) -> None:
-        async with self._input_lock:
-            self._closed = True
-            await self._cancel_active('shutdown')
+        stopping = not self._closed
+        self._closed = True
+        owner = self._owner
+        if owner is not None:
+            if stopping:
+                owner.cancel()
+            await asyncio.shield(asyncio.gather(owner, return_exceptions=True))
+        await self._flush_shutdown()

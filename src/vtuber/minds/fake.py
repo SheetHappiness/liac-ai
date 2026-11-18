@@ -1,4 +1,5 @@
 import asyncio
+import json
 import re
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -8,6 +9,7 @@ from vtuber.contracts.events import UserMessage, FastInput, new_id
 from vtuber.contracts.mind import MindDecision
 from vtuber.contracts.state import FastSnapshot
 from vtuber.contracts.deep import DeepRequest, DeepResult
+from vtuber.minds.m6_context import PERCEPTION_FRAME
 
 
 @dataclass(frozen=True)
@@ -42,6 +44,9 @@ class FakeSingleMind:
     async def generate(self, messages: tuple[dict[str, object], ...], *,
                        on_speak_delta: Callable[[str], None] | None = None) -> MindDecision:
         message = next(item['content'] for item in reversed(messages) if item['role'] == 'user')
+        if message.startswith(PERCEPTION_FRAME):
+            items = json.loads(message.removeprefix(PERCEPTION_FRAME))
+            message = '\n'.join(item['content'] for item in items if item['delivery'] == 'direct')
         text = f'You said: {message}'
         if on_speak_delta is not None:
             on_speak_delta(text)
