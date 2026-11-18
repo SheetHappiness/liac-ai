@@ -6,7 +6,7 @@ from contextlib import closing, redirect_stdout
 from pathlib import Path
 from unittest.mock import patch
 
-from tests._fixtures import ScriptedMind
+from test_single_mind import ScriptedMind
 from vtuber.contracts.mind import MindDecision
 from vtuber.m6 import FakeSingleMind, run_console
 from vtuber.runtime.journal import Journal
