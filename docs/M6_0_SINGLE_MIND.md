@@ -157,7 +157,8 @@ tool-call IDs, and zero unfinished inputs. Replayed tool results grew from zero
 to six across the session. All five speech previews matched their final text
 and both silence turns emitted zero preview fragments. Usage reported zero
 cache reads and writes, with zero provider or tool-validation failures. The
-sample is too small for a useful p95. `off` remains unavailable on this route.
+first-speech p50 uses five speaking turns. The other medians use all seven.
+The sample is too small for a useful p95. `off` remains unavailable on this route.
 An additional `python -m vtuber.m6 --backend luna` entry-point smoke with a
 separate scratch database rendered a completed text reply and exited cleanly.
 After adding the history budget, a synthetic oversized input closed as failed
@@ -174,10 +175,15 @@ node --test tools/luna-bridge/speak_stream.test.mjs tools/luna-bridge/request_pr
 git diff --check
 ```
 
-The focused Python run passed 41 tests and Node passed seven. The fake console
-smoke grouped two quick lines into one reply and closed with zero unfinished
-inputs. The full Python suite passed 188 of 189 tests. Its only error remained
-the baseline `MainWindow.context` desktop regression.
+The focused run passed 41 tests on Python 3.12.14 and 3.14.7. Node passed seven.
+The fake console smoke grouped two quick lines into one reply and closed with
+zero unfinished inputs. The full Python suite passed 188 of 189 tests. Its only
+error remained the baseline `MainWindow.context` desktop regression.
+
+Independent review confirmed that oversized history could block later turns
+at the bridge limit. The reviewer assessed the byte-budget fix in `74fb7cb`
+and gave a **GO** for the local M6 text experiment. A completed Journal event
+records the validated tool decision. Console notifications remain ephemeral.
 
 This milestone leaves Wake/Attention, Live State, VLM, M4.8 compaction
 adaptation, TTS and external actions for later work. The measurements cover

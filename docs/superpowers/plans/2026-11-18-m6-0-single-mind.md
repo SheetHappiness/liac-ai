@@ -70,11 +70,11 @@
 
 **Interfaces:** CLI `node tools/luna-bridge/probe.mjs --list`, `--login`, `--reasoning low` and optionally `--reasoning off`. Structured local report: selected provider/model, supported reasoning levels if discoverable, first event/first tool-delta/final elapsed ms, final tool name, usage if exposed; **never** tokens or raw private prompt.
 
-- [ ] **Step 1: Create the isolated dependency and probe scaffold.** Pin a released `@oh-my-pi/pi-ai` version exactly in `package.json` plus lockfile. Document the version actually installed. Probe should use the library's supported `openai-codex` model/OAuth APIs, not OMP internal credential parsing or an unofficial HTTP endpoint. Interactive login stores secrets only under ignored `.data/m6-auth/`.
-- [ ] **Step 2: Verify locally without credentials.** Run `node --check tools/luna-bridge/probe.mjs` and `node tools/luna-bridge/probe.mjs --list`. Missing `gpt-6-luna` or credentials must produce a clear diagnostic, never an invented model substitution.
-- [ ] **Step 3: Run the **real, authenticated** probe on the target machine.** With a deliberately non-sensitive example and two tool schemas (`speak(message: string)`, `stay_silent()`), verify model ID, `low` acceptance, `toolcall_delta` delivery, final complete tool-call arguments and request/prompt shaping. The library's `onPayload` hook may be inspected privately/redacted to check extra prompt overhead; do not log credentials.
-- [ ] **Step 4: Check `off` only if advertised** by the real provider/model. Compare at least five short matched `low` trials and, if supported, five `off` trials. Record median first-tool-delta, completed duration, whether a usable `speak` fragment appeared and failures. Record `off unavailable` rather than faking support.
-- [ ] **Step 5: Decision gate.** **GO** only if the exact Luna route with acceptable prompt control and streamed tool argument deltas works. **NO-GO** → document failure and stop before Task 2; a separate review may choose OMP RPC, but the execution must not silently switch transports. Commit probe/lock/evidence as `test: verify direct Luna transport capabilities` with the required trailer.
+- [x] **Step 1: Create the isolated dependency and probe scaffold.** Pin a released `@oh-my-pi/pi-ai` version exactly in `package.json` plus lockfile. Document the version actually installed. Probe should use the library's supported `openai-codex` model/OAuth APIs, not OMP internal credential parsing or an unofficial HTTP endpoint. Interactive login stores secrets only under ignored `.data/m6-auth/`.
+- [x] **Step 2: Verify locally without credentials.** Run `node --check tools/luna-bridge/probe.mjs` and `node tools/luna-bridge/probe.mjs --list`. Missing `gpt-6-luna` or credentials must produce a clear diagnostic, never an invented model substitution.
+- [x] **Step 3: Run the **real, authenticated** probe on the target machine.** With a deliberately non-sensitive example and two tool schemas (`speak(message: string)`, `stay_silent()`), verify model ID, `low` acceptance, `toolcall_delta` delivery, final complete tool-call arguments and request/prompt shaping. The library's `onPayload` hook may be inspected privately/redacted to check extra prompt overhead; do not log credentials.
+- [x] **Step 4: Check `off` only if advertised** by the real provider/model. Compare at least five short matched `low` trials and, if supported, five `off` trials. Record median first-tool-delta, completed duration, whether a usable `speak` fragment appeared and failures. Record `off unavailable` rather than faking support.
+- [x] **Step 5: Decision gate.** **GO** only if the exact Luna route with acceptable prompt control and streamed tool argument deltas works. **NO-GO** → document failure and stop before Task 2; a separate review may choose OMP RPC, but the execution must not silently switch transports. Commit probe/lock/evidence as `test: verify direct Luna transport capabilities` with the required trailer.
 
 ### Task 2: Narrow streaming bridge, not a coding agent
 
@@ -86,11 +86,11 @@
 - JSONL host → bridge: `{"type":"turn","id":"...","system":"...","messages":[...],"reasoning":"low"}`; `{"type":"cancel","id":"..."}`; `{"type":"shutdown"}`. Bridge owns the fixed two-tool schema, provider and auth. M6 controls only system and message data, not raw auth.
 - JSONL bridge → host: `{"type":"speak_delta","id":"...","text":"..."}` for **provisional** text; `{"type":"result","id":"...","action":"speak","message":"...","tool_call_id":"...","usage":{...}}` or `stay_silent`; `{"type":"error","id":"...","kind":"..."}`. One terminal frame per ID. No credentials, reasoning text or raw provider payload in frames.
 
-- [ ] **Step 1: Write RED Python tests** `test_fake_bridge_speak_and_silence`, `test_bridge_error_is_visible`, `test_cancel_stops_deltas`, `test_close_joins_owned_process`. Use a tiny Python JSONL fixture instead of importing Node or requiring credentials in `unittest`. Run `python -m unittest test_luna_stream -v` and observe expected missing-interface failures.
-- [ ] **Step 2: Write RED Node parser tests** for `speak_stream.mjs`: split `"message"` across JSON chunks; escaped quotes/backslashes; Unicode surrogate pairs; more than one tool-call index; no text emitted for `stay_silent`; malformed partial argument never treated as a completed action.
-- [ ] **Step 3: Implement small, scoped components.** Bridge: one `AbortController` per active turn and one output line per event; no filesystem tools, coding-agent session, auto-tools or agent loop. `speak_stream` only extracts decoded `message` from the matching `speak` argument stream, inspired by Bea's tested parser. Host: one `asyncio.create_subprocess_exec` owner, read/write JSONL, cancellation → `cancel`/abort, bounded teardown; validate a **complete** final call before returning `MindDecision`. No generic multiprocess supervisor or retry ladder.
-- [ ] **Step 4: Run GREEN:** `python -m unittest test_luna_stream -v`; `node --test tools/luna-bridge/speak_stream.test.mjs`; `node --check tools/luna-bridge/bridge.mjs`. Record the difference between provisional streamed words and completed authoritative tool calls.
-- [ ] **Step 5: Commit** as `feat: stream minimal Luna tool decisions` with trailer.
+- [x] **Step 1: Write RED Python tests** `test_fake_bridge_speak_and_silence`, `test_bridge_error_is_visible`, `test_cancel_stops_deltas`, `test_close_joins_owned_process`. Use a tiny Python JSONL fixture instead of importing Node or requiring credentials in `unittest`. Run `python -m unittest test_luna_stream -v` and observe expected missing-interface failures.
+- [x] **Step 2: Write RED Node parser tests** for `speak_stream.mjs`: split `"message"` across JSON chunks; escaped quotes/backslashes; Unicode surrogate pairs; more than one tool-call index; no text emitted for `stay_silent`; malformed partial argument never treated as a completed action.
+- [x] **Step 3: Implement small, scoped components.** Bridge: one `AbortController` per active turn and one output line per event; no filesystem tools, coding-agent session, auto-tools or agent loop. `speak_stream` only extracts decoded `message` from the matching `speak` argument stream, inspired by Bea's tested parser. Host: one `asyncio.create_subprocess_exec` owner, read/write JSONL, cancellation → `cancel`/abort, bounded teardown; validate a **complete** final call before returning `MindDecision`. No generic multiprocess supervisor or retry ladder.
+- [x] **Step 4: Run GREEN:** `python -m unittest test_luna_stream -v`; `node --test tools/luna-bridge/speak_stream.test.mjs`; `node --check tools/luna-bridge/bridge.mjs`. Record the difference between provisional streamed words and completed authoritative tool calls.
+- [x] **Step 5: Commit** as `feat: stream minimal Luna tool decisions` with trailer.
 
 ### Task 3: Reuse durable ingestion and build tool-aware context
 
@@ -101,11 +101,11 @@
 - `build_m6_messages(identity: str, dialogue: tuple[Event, ...]) -> tuple[dict[str, object], ...]`. Deterministic context construction using already-committed `Journal.recent_dialogue(..., limit=40)`; include the current newly accepted user message **once**.
 - For M6 terminal `character.reply.completed` add payload fields `action='speak'|'stay_silent'`, `tool_call_id` and `text` (empty for silence); project M6 speech as an assistant tool call + successful tool-result message. **Legacy completed replies without `action` remain legacy assistant text**, not falsely invented tool calls. Cancelled/failed events do not become completed speech.
 
-- [ ] **Step 1: Add RED tests** `test_existing_m5_ingestion_unchanged`, `test_m6_tool_replay_uses_stable_call_id`, `test_stay_silent_replay`, `test_legacy_reply_remains_plain_text`, `test_current_user_message_only_once`. Run `python -m unittest test_m6_context test_perception_runtime -v`.
-- [ ] **Step 2: Extract only the shared atomic ingestion** from the old Runtime into Journal; do not redesign Journal transactions. Rewire old `Runtime.submit_perceptions` to reuse it under its existing input lock. Preserve the order/raw event IDs and partial replay semantics.
-- [ ] **Step 3: Add M6 context projection** without editing the legacy `ContextCompiler` or M4.8 schema. Keep persona+operating instructions short and model-owned. Do not use `deep.md`; do not insert hidden reasoning. The output must match the chosen `pi-ai` tool-call history format from Task 1.
-- [ ] **Step 4: Run GREEN:** `python -m unittest test_m6_context test_perception_runtime test_context test_deep -v`. Verify that M5.0 still produces a Fast turn for new local input.
-- [ ] **Step 5: Commit** as `refactor: share perception ingestion and replay Luna actions` with trailer.
+- [x] **Step 1: Add RED tests** `test_existing_m5_ingestion_unchanged`, `test_m6_tool_replay_uses_stable_call_id`, `test_stay_silent_replay`, `test_legacy_reply_remains_plain_text`, `test_current_user_message_only_once`. Run `python -m unittest test_m6_context test_perception_runtime -v`.
+- [x] **Step 2: Extract only the shared atomic ingestion** from the old Runtime into Journal; do not redesign Journal transactions. Rewire old `Runtime.submit_perceptions` to reuse it under its existing input lock. Preserve the order/raw event IDs and partial replay semantics.
+- [x] **Step 3: Add M6 context projection** without editing the legacy `ContextCompiler` or M4.8 schema. Keep persona+operating instructions short and model-owned. Do not use `deep.md`; do not insert hidden reasoning. The output must match the chosen `pi-ai` tool-call history format from Task 1.
+- [x] **Step 4: Run GREEN:** `python -m unittest test_m6_context test_perception_runtime test_context test_deep -v`. Verify that M5.0 still produces a Fast turn for new local input.
+- [x] **Step 5: Commit** as `refactor: share perception ingestion and replay Luna actions` with trailer.
 
 ### Task 4: One SingleMindRuntime on the existing event loop
 
@@ -116,11 +116,11 @@
 - `async start() -> None`, `async submit_perceptions(batch: PerceptionBatch) -> asyncio.Task[None] | None`, `async close() -> None`. Only one active visible generation; own the task and input lock; no Deep worker or legacy Initiative.
 - Durable IDs reuse M5.0 conventions: `reply_started_{canonical_input.event_id}` and `reply_terminal_{canonical_input.event_id}`. Terminal reply payload contains `text`, `action` and `tool_call_id` on success, or existing cancelled/failed event kinds with reason. New database for M6 live smoke.
 
-- [ ] **Step 1: Add RED `IsolatedAsyncioTestCase` tests** `test_direct_burst_starts_one_luna_turn`, `test_ambient_only_no_inference`, `test_replay_no_second_speech`, `test_silence_is_completed_without_text`, `test_superseded_turn_cannot_emit_late_text`, `test_restart_closes_unfinished_without_regeneration`, `test_only_complete_tool_call_commits`. Use a scripted fake `SingleMindPort` and real temporary SQLite.
-- [ ] **Step 2: Implement the coordinator.** Ingress happens inside the owner lock; persist before starting inference; create a frozen read of canonical dialogue; no model call for ambient-only input. Emit `RuntimeOutput(kind='reply.started', ...)`, provisional `reply.delta` for already decoded `speak` fragments, and one terminal notification. Ignore/cancel deltas after supersession. Complete authoritative `speak` or `stay_silent` results only after bridge final validation.
-- [ ] **Step 3: Reuse existing restart semantics.** At startup mark persisted-but-unterminated user inputs `character.reply.cancelled` with `process_restarted`. **Never auto-regenerate** a turn that may have already produced visible output. Do not report partial text as fully delivered. Prevent duplicate terminal IDs.
-- [ ] **Step 4: Run GREEN:** `python -m unittest test_single_mind test_m6_context test_perception_runtime test_runtime_lifecycle -v`. Inspect transaction ordering and cancellation in a real SQLite temp file.
-- [ ] **Step 5: Commit** as `feat: run one Luna cognitive turn per local batch` with trailer.
+- [x] **Step 1: Add RED `IsolatedAsyncioTestCase` tests** `test_direct_burst_starts_one_luna_turn`, `test_ambient_only_no_inference`, `test_replay_no_second_speech`, `test_silence_is_completed_without_text`, `test_superseded_turn_cannot_emit_late_text`, `test_restart_closes_unfinished_without_regeneration`, `test_only_complete_tool_call_commits`. Use a scripted fake `SingleMindPort` and real temporary SQLite.
+- [x] **Step 2: Implement the coordinator.** Ingress happens inside the owner lock; persist before starting inference; create a frozen read of canonical dialogue; no model call for ambient-only input. Emit `RuntimeOutput(kind='reply.started', ...)`, provisional `reply.delta` for already decoded `speak` fragments, and one terminal notification. Ignore/cancel deltas after supersession. Complete authoritative `speak` or `stay_silent` results only after bridge final validation.
+- [x] **Step 3: Reuse existing restart semantics.** At startup mark persisted-but-unterminated user inputs `character.reply.cancelled` with `process_restarted`. **Never auto-regenerate** a turn that may have already produced visible output. Do not report partial text as fully delivered. Prevent duplicate terminal IDs.
+- [x] **Step 4: Run GREEN:** `python -m unittest test_single_mind test_m6_context test_perception_runtime test_runtime_lifecycle -v`. Inspect transaction ordering and cancellation in a real SQLite temp file.
+- [x] **Step 5: Commit** as `feat: run one Luna cognitive turn per local batch` with trailer.
 
 ### Task 5: Opt-in CLI proof, evidence and final review
 
@@ -131,28 +131,28 @@
 - Local text messages are published as `Perception(kind='chat', source='local', conversation_key='local', delivery='direct', ...)`. A background drain task consumes settled batches while the stdin reader continues, allowing a later user turn to supersede an active generation. Shut down by closing the Bus and joining owned tasks.
 - CLI renders `reply.delta` as **provisional text**, `reply.completed` as final, and explicit silence as no spoken line; no audio claim.
 
-- [ ] **Step 1: Add RED CLI tests** `test_fake_console_burst_one_reply`, `test_quit_drains_then_closes`, `test_ambient_does_not_start_luna` (the latter may directly call Runtime), plus `test_legacy_cli_unchanged` when relevant. Use monkey-patched input lines and fake adapter, no Node credentials in CI.
-- [ ] **Step 2: Implement only the new optional M6 CLI** by reusing `vtuber.cli.input_lines`; do not redesign stdin or add a generic service framework. Let fake mode work with no npm install, OAuth or LM Studio.
-- [ ] **Step 3: Run offline verification** on the user's worktree:
+- [x] **Step 1: Add RED CLI tests** `test_fake_console_burst_one_reply`, `test_quit_drains_then_closes`, `test_ambient_does_not_start_luna` (the latter may directly call Runtime), plus `test_legacy_cli_unchanged` when relevant. Use monkey-patched input lines and fake adapter, no Node credentials in CI.
+- [x] **Step 2: Implement only the new optional M6 CLI** by reusing `vtuber.cli.input_lines`; do not redesign stdin or add a generic service framework. Let fake mode work with no npm install, OAuth or LM Studio.
+- [x] **Step 3: Run offline verification** on the user's worktree:
   - `$env:PYTHONPATH='src;tests;vendor/omp-rpc/src'` (PowerShell).
   - `python -m unittest test_luna_stream test_m6_context test_single_mind test_m6_cli test_perception_runtime -v`.
   - `python -m unittest discover -s tests -v`.
   - `python -m vtuber.m6 --backend fake --db .data/m6-fake.sqlite3`, type two quick lines and `/quit`.
   - `git diff --check`, `git status --short`.
-- [ ] **Step 4: Run real Luna acceptance**, **only in the user's authenticated environment**. Send 5 short direct prompts and 2 deliberate silence scenarios; measure p50/p95 where sample counts permit, first `toolcall_delta`/first decoded `speak` fragment/full response, accepted model and reasoning, failures/usage. Try `off` only if advertised; run the same prompts and compare behavior. Do not claim TTS/first-audio latency. Use no personal transcript in committed files.
-- [ ] **Step 5: Write `docs/M6_0_SINGLE_MIND.md`** with the tested versions/commands, actual observations, old baseline failure, private-data safeguards and explicit **not yet implemented** list: Attention/Wake, Live State, VLM, M4.8 adaptation, TTS, actions. Note the limitations of the small last-40-event context and separate M6 scratch database.
-- [ ] **Step 6: Commit** as `docs: verify M6 single-mind text prototype` with trailer. Request one independent review of the branch for real regressions and clear stop/go recommendation. **No PR, merge, deployment or changes to `softsock/liac-ai`** without a new request.
+- [x] **Step 4: Run real Luna acceptance**, **only in the user's authenticated environment**. Send 5 short direct prompts and 2 deliberate silence scenarios; measure p50/p95 where sample counts permit, first `toolcall_delta`/first decoded `speak` fragment/full response, accepted model and reasoning, failures/usage. Try `off` only if advertised; run the same prompts and compare behavior. Do not claim TTS/first-audio latency. Use no personal transcript in committed files.
+- [x] **Step 5: Write `docs/M6_0_SINGLE_MIND.md`** with the tested versions/commands, actual observations, old baseline failure, private-data safeguards and explicit **not yet implemented** list: Attention/Wake, Live State, VLM, M4.8 adaptation, TTS, actions. Note the limitations of the small last-40-event context and separate M6 scratch database.
+- [x] **Step 6: Commit** as `docs: verify M6 single-mind text prototype` with trailer. Request one independent review of the branch for real regressions and clear stop/go recommendation. **No PR, merge, deployment or changes to `softsock/liac-ai`** without a new request.
 
 ## Acceptance checklist
 
-- [ ] Real `openai-codex/gpt-6-luna` with `low` returns a real `speak` tool call; provider-facing prompt and streaming capability measured, not assumed.
-- [ ] Optional `off` is either tested on the *exact route* or explicitly marked unavailable.
-- [ ] Fake and real (if access works) use the **same** SingleMind protocol and Journal ingestion.
-- [ ] A direct burst produces one canonical user input and at most one spoken decision; ambient/noise stays silent.
-- [ ] Tool-call history preserves original action identity; replay never invents executed speech.
-- [ ] Cancellation/restart cannot produce a second committed reply or a stale visible delta.
-- [ ] Existing M5.0 tests still pass; full suite failures are compared with actual pre-change baseline.
-- [ ] Real timing and usage are recorded separately from offline fake tests; **no TTS or VLM claim**.
+- [x] Real `openai-codex/gpt-6-luna` with `low` returns a real `speak` tool call; provider-facing prompt and streaming capability measured, not assumed.
+- [x] Optional `off` is either tested on the *exact route* or explicitly marked unavailable.
+- [x] Fake and real (if access works) use the **same** SingleMind protocol and Journal ingestion.
+- [x] A direct burst produces one canonical user input and at most one spoken decision; ambient/noise stays silent.
+- [x] Tool-call history preserves original action identity; replay never invents executed speech.
+- [x] Cancellation/restart cannot produce a second committed reply or a stale visible delta.
+- [x] M5.0 perception and Runtime regression tests pass. The full suite retains the measured `MainWindow.context` baseline error.
+- [x] Real timing and usage are recorded separately from offline fake tests; **no TTS or VLM claim**.
 
 ## Deliberate exclusions and next step
 
