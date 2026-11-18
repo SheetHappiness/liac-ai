@@ -104,6 +104,8 @@ Keep working foundations, but do not contort the M6 single-mind design to preser
 
 ## 5. Perception and Attention
 
+> **M6.1a EXPERIMENT (2026-11-18):** Direct-only Wake and bounded in-memory, conversation-scoped Live State have been added on `codex/m6-1-attention-live-state`; see [M6.1a status and verification](M6_1_ATTENTION_LIVE_STATE.md). No autonomous ambient wake, VLM, Hot/Cold M6 handoff or live-provider acceptance is claimed yet.
+
 ### 5.1 Perception [KEEP M5.0]
 
 Current **EXPERIMENT** defaults: `live_gap=0.30s`, `text_gap=0.75s`, `max_window=2.0s`, `max_pending=256`. These are scheduling choices, not latency promises.
