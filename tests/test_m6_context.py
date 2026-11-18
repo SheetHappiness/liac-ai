@@ -1,0 +1,69 @@
+import unittest
+from contextlib import closing
+from dataclasses import replace
+
+from test_perception import perception
+from test_perception_runtime import batch
+from vtuber.contracts.events import Event, UserMessage
+from vtuber.minds.m6_context import build_m6_messages
+from vtuber.runtime.journal import EventConflict, Journal
+
+
+def reply(text, **payload):
+    return Event.create('primary', 'character.reply.completed', {'text': text, **payload},
+                        occurred_at='2026-11-18T00:00:00+00:00')
+
+
+class M6ContextTests(unittest.TestCase):
+    def test_existing_m5_ingestion_unchanged(self):
+        first = perception('one', content='first')
+        ambient = perception('ambient', delivery='ambient')
+        second = perception('two', content='second')
+        with closing(Journal(':memory:')) as journal:
+            accept = journal.accept_local_perceptions
+            first_message = accept('primary', batch(first, ambient, first))
+            self.assertEqual(first_message.text, 'first')
+            self.assertEqual([e.event_id for e in journal.read('primary')],
+                             ['one', 'ambient', first_message.event_id])
+            self.assertEqual(journal.get('one').occurred_at, first.occurred_at)
+            self.assertIsNone(accept('primary', batch(ambient, first)))
+            with self.assertRaises(EventConflict):
+                accept('primary', batch(second, replace(first, content='conflict')))
+            with self.assertRaises(ValueError):
+                accept('primary', batch(second, replace(first, author_id='other')))
+            self.assertIsNone(journal.get('two'))
+            self.assertEqual(accept('primary', batch(first, second)).text, 'second')
+
+    def test_m6_tool_replay_uses_stable_call_id(self):
+        event = reply('Hello!', action='speak', tool_call_id='call_real|fc_real')
+        _, call, result = build_m6_messages('You are Liac.', (event,))
+        self.assertEqual(call['content'], [{'type': 'toolCall', 'name': 'speak',
+                                           'id': 'call_real|fc_real', 'arguments': {'message': 'Hello!'}}])
+        self.assertEqual((call['role'], call['api'], call['provider'], call['model'], call['stopReason']),
+                         ('assistant', 'openai-codex-responses', 'openai-codex', 'gpt-6-luna', 'toolUse'))
+        self.assertEqual(result['role'], 'toolResult')
+        self.assertEqual(result['toolCallId'], 'call_real|fc_real')
+        self.assertEqual(result['toolName'], 'speak')
+        self.assertFalse(result['isError'])
+        self.assertEqual(build_m6_messages('You are Liac.', (event,))[1:], (call, result))
+
+    def test_stay_silent_replay(self):
+        _, call, result = build_m6_messages('Identity', (reply('', action='stay_silent', tool_call_id='quiet'),))
+        self.assertEqual(call['content'], [{'type': 'toolCall', 'name': 'stay_silent',
+                                           'id': 'quiet', 'arguments': {}}])
+        self.assertEqual((result['toolCallId'], result['toolName']), ('quiet', 'stay_silent'))
+
+    def test_legacy_reply_remains_plain_text(self):
+        ended = ('character.reply.cancelled', 'character.reply.failed')
+        events = (reply('Legacy'), *(Event.create('primary', kind, {'text': 'preview'}) for kind in ended))
+        _, legacy = build_m6_messages('Identity', events)
+        self.assertEqual(legacy['role'], 'assistant')
+        self.assertEqual(legacy['content'], [{'type': 'text', 'text': 'Legacy'}])
+
+    def test_current_user_message_only_once(self):
+        current = UserMessage('Latest').as_event()
+        system, user = build_m6_messages('You are Liac.', (current,))
+        self.assertEqual(system['role'], 'system')
+        self.assertTrue(system['content'].startswith('You are Liac.'))
+        self.assertIn('stay_silent', system['content'])
+        self.assertEqual((user['role'], user['content']), ('user', 'Latest'))

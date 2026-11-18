@@ -59,6 +59,13 @@ class LunaStreamTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(decision, MindDecision("speak", "Hello!", "call_1", {"input": 5, "output": 2}))
         self.assertEqual(await self.generate("silence", self.fail), MindDecision("stay_silent", "", "call_2"))
 
+    async def test_projected_system_message_is_sent_separately(self):
+        mind = LunaStream((sys.executable, "-u", "-c", FIXTURE), system="Fallback")
+        self.addAsyncCleanup(mind.close)
+        decision = await mind.generate(({"role": "system", "content": "Identity"},
+                                        {"role": "user", "content": "silence"}))
+        self.assertEqual(decision.action, "stay_silent")
+
     async def test_bridge_error_is_visible(self):
         with self.assertRaisesRegex(LunaStreamError, "provider_error"):
             await self.generate("error")

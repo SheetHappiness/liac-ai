@@ -6,10 +6,12 @@ from contextlib import contextmanager
 from dataclasses import asdict, replace
 from pathlib import Path
 from datetime import datetime, timedelta
+from hashlib import sha256
 from typing import Callable, Iterator
 
-from vtuber.contracts.events import CharacterId, CharacterInitiative, Event, canonical_json, utc_now
+from vtuber.contracts.events import CharacterId, CharacterInitiative, Event, UserMessage, canonical_json, utc_now
 from vtuber.contracts.context import CompactionProposal, CompactionResult, ContextEpoch, ContextItem
+from vtuber.contracts.perception import PerceptionBatch
 from vtuber.contracts.state import CharacterState, FastSnapshot, NoteProposal, UpdateResult
 from vtuber.runtime.state import RevisionConflict, reduce_note
 from vtuber.contracts.deep import (CompactionInput, DeepRequest, DeepResult,
@@ -103,6 +105,31 @@ class Journal:
     def append_many(self, events: tuple[Event, ...]) -> tuple[Event, ...]:
         with self._transaction():
             return tuple(self._append(event) for event in events)
+
+    def accept_local_perceptions(self, character_id: str, batch: PerceptionBatch) -> UserMessage | None:
+        direct = tuple(item for item in batch.items if item.delivery == 'direct')
+        if any(item.kind != 'chat' or item.source != 'local' or item.conversation_key != 'local'
+               for item in direct) or len({item.author_id for item in direct}) > 1:
+            raise ValueError('M5.0 supports only single-author direct chat on the local route')
+        raw = tuple(Event.create(character_id, 'perception.received', asdict(item),
+            event_id=item.perception_id, source=item.source, occurred_at=item.occurred_at)
+            for item in batch.items if item.delivery != 'noise')
+        with self._transaction():
+            # Check every raw event for conflicts, including replays that produce no dialogue.
+            new_direct = {}
+            for item in direct:
+                if self.get(item.perception_id) is None:
+                    new_direct.setdefault(item.perception_id, item)
+            for event in raw:
+                self._append(event)
+            if not new_direct:
+                return None
+            digest = sha256(canonical_json(list(new_direct)).encode('utf-8')).hexdigest()
+            message = UserMessage('\n'.join(item.content for item in new_direct.values()),
+                character_id, event_id='perception_group_' + digest, turn_id='perception_turn_' + digest,
+                occurred_at=next(iter(new_direct.values())).occurred_at)
+            self._append(message.as_event())
+            return message
 
     def read(self, character_id: CharacterId, *, after: int = 0,
              limit: int = 100) -> tuple[Event, ...]:

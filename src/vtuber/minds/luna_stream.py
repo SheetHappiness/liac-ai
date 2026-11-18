@@ -18,7 +18,7 @@ class LunaStreamError(RuntimeError):
 
 
 class LunaStream:
-    def __init__(self, command: tuple[str, ...], *, system: str, reasoning: str = "low") -> None:
+    def __init__(self, command: tuple[str, ...], *, system: str = "", reasoning: str = "low") -> None:
         self._command = command
         self._system = system
         self._reasoning = reasoning
@@ -71,13 +71,17 @@ class LunaStream:
         async with self._lock:
             if self._closed:
                 raise LunaStreamError("bridge_closed")
+            system = self._system
+            if messages and messages[0].get("role") == "system":
+                system = messages[0]["content"]
+                messages = messages[1:]
             self.last_timings = {}
             process = await self._start()
             identifier = uuid4().hex
             try:
                 await self._send(process, {
                     "type": "turn", "id": identifier, "messages": messages,
-                    "system": self._system, "reasoning": self._reasoning,
+                    "system": system, "reasoning": self._reasoning,
                 })
                 async with asyncio.timeout(45):
                     while True:
