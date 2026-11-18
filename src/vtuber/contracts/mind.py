@@ -3,6 +3,14 @@ from dataclasses import dataclass
 from typing import Literal, Protocol
 
 
+class MindStreamError(RuntimeError):
+    """Adapter failure with a technical code safe for runtime diagnostics."""
+
+    def __init__(self, code: str) -> None:
+        super().__init__(code)
+        self.code = code
+
+
 @dataclass(frozen=True)
 class MindDecision:
     action: Literal["speak", "stay_silent"]

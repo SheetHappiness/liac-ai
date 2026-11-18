@@ -31,10 +31,14 @@ class LiveState:
             del self._items[next(iter(self._items))]
 
     def snapshot(self, conversation_key: str, *, now: float | None = None) -> tuple[Perception, ...]:
-        self._expire(monotonic() if now is None else now)
-        # Most recently changed source first; stable ordering for equal updates.
-        return tuple(item for (scope, _, _), (_, item) in reversed(tuple(self._items.items()))
-                     if scope == conversation_key)
+        return tuple(item for item, _ in self.active(conversation_key, now=now))
+
+    def active(self, conversation_key: str, *, now: float | None = None
+               ) -> tuple[tuple[Perception, float], ...]:
+        cutoff = (monotonic() if now is None else now) - self.ttl_seconds
+        return tuple((item, seen - cutoff)
+                     for (scope, _, _), (seen, item) in reversed(self._items.items())
+                     if scope == conversation_key and seen > cutoff)
 
     def _expire(self, now: float) -> None:
         for key, (seen, _) in tuple(self._items.items()):

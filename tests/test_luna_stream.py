@@ -40,7 +40,7 @@ for line in sys.stdin:
         send("speak_delta", text="Hel")
         send("speak_delta", text="lo!")
         send("result", action="speak", message="Hello!", tool_call_id="call_1",
-             usage={"input": 5, "output": 2})
+             usage={"input": 5, "output": 2}, timings={"first_tool_delta_ms": 12, "completed_ms": 18})
 """
 
 
@@ -53,11 +53,16 @@ class LunaStreamTests(unittest.IsolatedAsyncioTestCase):
         return self.mind.generate(({"role": "user", "content": text},), on_speak_delta=callback)
 
     async def test_fake_bridge_speak_and_silence(self):
+        self.assertEqual(self.mind.model_status(),
+                         {"name": "gpt-6-luna", "reasoning": "low", "bridge": "not_started"})
         deltas = []
         decision = await self.generate("speak", deltas.append)
+        self.assertEqual(self.mind.model_status()["bridge"], "running")
         self.assertEqual(deltas, ["Hel", "lo!"])
         self.assertEqual(decision, MindDecision("speak", "Hello!", "call_1", {"input": 5, "output": 2}))
+        self.assertEqual(self.mind.last_timings, {"first_tool_delta_ms": 12, "completed_ms": 18})
         self.assertEqual(await self.generate("silence", self.fail), MindDecision("stay_silent", "", "call_2"))
+        self.assertEqual(self.mind.last_timings, {})
 
     async def test_projected_system_message_is_sent_separately(self):
         mind = LunaStream((sys.executable, "-u", "-c", FIXTURE), system="Fallback")
@@ -67,8 +72,10 @@ class LunaStreamTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(decision.action, "stay_silent")
 
     async def test_bridge_error_is_visible(self):
-        with self.assertRaisesRegex(LunaStreamError, "provider_error"):
+        with self.assertRaisesRegex(LunaStreamError, "provider_error") as raised:
             await self.generate("error")
+        self.assertEqual(raised.exception.code, "provider_error")
+        self.assertEqual(self.mind.model_status()["bridge"], "unavailable")
         with self.assertRaises(LunaStreamError):
             await self.generate("invalid")
 
@@ -112,3 +119,4 @@ class LunaStreamTests(unittest.IsolatedAsyncioTestCase):
         self.addAsyncCleanup(mind.close)
         with self.assertRaisesRegex(LunaStreamError, "startup_failed"):
             await mind.generate(({"role": "user", "content": "hi"},))
+        self.assertEqual(mind.model_status()["bridge"], "unavailable")

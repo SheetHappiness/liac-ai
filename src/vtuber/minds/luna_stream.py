@@ -3,7 +3,7 @@ import json
 from collections.abc import Callable
 from uuid import uuid4
 
-from vtuber.contracts.mind import MindDecision
+from vtuber.contracts.mind import MindDecision, MindStreamError
 
 
 MAX_FRAME_BYTES = 64 * 1024
@@ -13,7 +13,7 @@ ERROR_KINDS = {
 }
 
 
-class LunaStreamError(RuntimeError):
+class LunaStreamError(MindStreamError):
     pass
 
 
@@ -24,11 +24,22 @@ class LunaStream:
         self._reasoning = reasoning
         self._lock = asyncio.Lock()
         self._process: asyncio.subprocess.Process | None = None
+        self._launch_attempted = False
         self._closed = False
         self.last_timings: dict[str, int] = {}
 
+    def model_status(self) -> dict[str, str]:
+        if self._process is not None and self._process.returncode is None:
+            bridge = "running"
+        elif self._launch_attempted or self._closed:
+            bridge = "unavailable"
+        else:
+            bridge = "not_started"
+        return {"name": "gpt-6-luna", "reasoning": self._reasoning, "bridge": bridge}
+
     async def _start(self) -> asyncio.subprocess.Process:
         if self._process is None or self._process.returncode is not None:
+            self._launch_attempted = True
             try:
                 self._process = await asyncio.create_subprocess_exec(
                     *self._command,

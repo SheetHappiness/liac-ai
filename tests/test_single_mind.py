@@ -1,27 +1,14 @@
 import asyncio
+import json
 import tempfile
 import unittest
 from pathlib import Path
 
-from test_perception import perception
-from test_perception_runtime import batch
-from vtuber.contracts.events import Event
+from tests._fixtures import ScriptedMind, batch, perception
+from vtuber.contracts.events import Event, UserMessage
 from vtuber.contracts.mind import MindDecision
 from vtuber.runtime.journal import Journal
 from vtuber.runtime.single_mind import SingleMindRuntime
-
-
-class ScriptedMind:
-    def __init__(self, *scripts):
-        self.calls = []
-        self.scripts = iter(scripts)
-
-    async def generate(self, messages, *, on_speak_delta=None):
-        self.calls.append(messages)
-        scripted = next(self.scripts)
-        if isinstance(scripted, MindDecision):
-            return scripted
-        return await scripted(messages, on_speak_delta)
 
 
 class SingleMindRuntimeTests(unittest.IsolatedAsyncioTestCase):
@@ -38,8 +25,8 @@ class SingleMindRuntimeTests(unittest.IsolatedAsyncioTestCase):
         self.addAsyncCleanup(runtime.close)
         return runtime
 
-    def events(self, kind):
-        return tuple(event for event in self.journal.read('primary') if event.kind == kind)
+    def events(self, kind, *, limit=100):
+        return tuple(event for event in self.journal.read('primary', limit=limit) if event.kind == kind)
 
     async def test_direct_burst_starts_one_luna_turn(self):
         async def speak(messages, preview):
@@ -123,6 +110,10 @@ class SingleMindRuntimeTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual([out.text for out in self.outputs if out.kind == 'reply.delta'], ['Provisional'])
 
     async def test_restart_closes_unfinished_without_regeneration(self):
+        prior = UserMessage('Earlier question')
+        self.journal.append_many((prior.as_event(), Event.create('primary',
+            'character.reply.completed', {'text': 'Earlier answer', 'action': 'speak', 'tool_call_id': 'old-call'},
+            turn_id=prior.turn_id, causation_id=prior.event_id)))
         before_start = self.journal.accept_local_perceptions('primary', batch(perception('accepted')))
         after_start = self.journal.accept_local_perceptions('primary', batch(perception('already-visible')))
         self.journal.append(Event.create('primary', 'character.reply.started', {'snapshot_revision': 7},
@@ -130,7 +121,7 @@ class SingleMindRuntimeTests(unittest.IsolatedAsyncioTestCase):
                             causation_id=after_start.event_id))
         self.journal.close()
         self.journal = Journal(self.path)
-        mind = ScriptedMind()
+        mind = ScriptedMind(MindDecision('stay_silent', tool_call_id='quiet'))
         runtime = await self.start(mind)
         self.assertIsNone(await runtime.submit_perceptions(batch(perception('already-visible',
             occurred_at=after_start.occurred_at))))
@@ -141,6 +132,10 @@ class SingleMindRuntimeTests(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(mind.calls)
         self.assertFalse(self.outputs)
         self.assertEqual(self.journal.unfinished_inputs('primary'), ())
+        await (await runtime.submit_perceptions(batch(perception('new', content='Latest'))))
+        _, previous_user, call, result, latest = mind.calls[0]
+        self.assertEqual((previous_user['content'], latest['content']), ('Earlier question', 'Latest'))
+        self.assertEqual((call['content'][0]['id'], result['toolCallId']), ('old-call', 'old-call'))
 
     async def test_only_complete_tool_call_commits(self):
         async def interrupted(messages, preview):
@@ -155,6 +150,7 @@ class SingleMindRuntimeTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(failures), 2)
         self.assertTrue(all('text' not in e.payload for e in failures))
         self.assertEqual(failures[0].payload['reason'], 'RuntimeError')
+        self.assertNotIn('Private provider diagnostic', json.dumps(runtime.snapshot()))
 
     async def test_close_before_generation_leaves_a_terminal(self):
         mind = ScriptedMind()
@@ -166,3 +162,90 @@ class SingleMindRuntimeTests(unittest.IsolatedAsyncioTestCase):
         terminal, = self.events('character.reply.cancelled')
         self.assertEqual(terminal.payload['reason'], 'shutdown')
         self.assertEqual(self.journal.unfinished_inputs('primary'), ())
+
+    async def test_task_cancelled_before_generation_closes_turn(self):
+        mind = ScriptedMind()
+        runtime = await self.start(mind)
+        task = await runtime.submit_perceptions(batch(perception('cancel-before-start')))
+        task.cancel()
+        with self.assertRaises(asyncio.CancelledError):
+            await task
+        self.assertEqual(mind.calls, [])
+        self.assertEqual(runtime.snapshot()['runtime'], {'state': 'idle', 'turn_id': None})
+        terminal, = self.events('character.reply.cancelled')
+        self.assertEqual(terminal.payload['reason'], 'cancelled')
+
+    async def test_replays_last_twenty_completed_turns_despite_cancelled_inputs(self):
+        for i in range(21):
+            user = UserMessage(f'Question {i}')
+            self.journal.append_many((user.as_event(), Event.create('primary',
+                'character.reply.completed', {'text': f'Legacy reply {i}'}, turn_id=user.turn_id)))
+        for i in range(41):
+            user = UserMessage(f'Cancelled {i}')
+            self.journal.append_many((user.as_event(), Event.create('primary',
+                'character.reply.cancelled', {'reason': 'superseded'}, turn_id=user.turn_id)))
+        mind = ScriptedMind(MindDecision('stay_silent', tool_call_id='quiet'))
+        runtime = await self.start(mind)
+        await (await runtime.submit_perceptions(batch(perception('current', content='Latest'))))
+        request, = mind.calls
+        self.assertEqual([item['content'] for item in request if item['role'] == 'user'],
+                         [f'Question {i}' for i in range(1, 21)] + ['Latest'])
+        self.assertEqual([item['content'][0]['text'] for item in request if item['role'] == 'assistant'],
+                         [f'Legacy reply {i}' for i in range(1, 21)])
+        self.assertEqual(len(self.events('character.reply.cancelled', limit=150)), 41)
+        self.assertTrue(runtime.snapshot()['context']['older_history_omitted'])
+
+    async def test_snapshot_tracks_turn_and_observes_committed_terminal(self):
+        entered, release = asyncio.Event(), asyncio.Event()
+
+        async def speak(messages, preview):
+            preview('Hello')
+            entered.set()
+            await release.wait()
+            return MindDecision('speak', 'Hello', 'call', {'input': 12, 'output': 4})
+
+        runtime = await self.start(ScriptedMind(speak))
+        self.assertEqual(runtime.snapshot()['runtime'], {'state': 'idle', 'turn_id': None})
+        terminal_snapshots = []
+
+        def output(event):
+            if event.kind == 'reply.completed':
+                terminal_snapshots.append((runtime.snapshot(), self.events('character.reply.completed')))
+
+        runtime.output = output
+        task = await runtime.submit_perceptions(batch(perception('hello')))
+        await asyncio.wait_for(entered.wait(), 1)
+        active = runtime.snapshot()
+        turn, = self.events('user.message.completed')
+        self.assertEqual(active['runtime'], {'state': 'generating', 'turn_id': turn.turn_id})
+        self.assertEqual(active['perception']['id'], 'hello')
+        self.assertEqual(active['wake'], {'decision': True, 'reason': 'new_direct'})
+        self.assertIsNone(active['generation']['first_tool_delta_ms'])
+        frame, = runtime.mind.calls
+        frame_bytes = len(json.dumps(frame, ensure_ascii=False, separators=(',', ':')).encode('utf-8'))
+        self.assertEqual(active['context']['frame_bytes'], frame_bytes)
+        self.assertEqual(active['context']['history_turns'], 0)
+        json.dumps(active)
+        release.set()
+        await task
+        (terminal, commits), = terminal_snapshots
+        self.assertEqual(len(commits), 1)
+        self.assertEqual(terminal['runtime'], {'state': 'idle', 'turn_id': None})
+        self.assertEqual(terminal['generation']['last_action'], 'speak')
+        self.assertGreaterEqual(terminal['generation']['duration_ms'], 0)
+        terminal['generation']['usage']['input'] = -1
+        self.assertEqual(runtime.snapshot()['generation']['usage']['input'], 12)
+
+    async def test_snapshot_records_safe_failure_and_next_short_turn_recovers(self):
+        mind = ScriptedMind(MindDecision('stay_silent', tool_call_id='quiet'))
+        runtime = await self.start(mind)
+        await (await runtime.submit_perceptions(batch(perception('large', content='x' * 65_000))))
+        failed = runtime.snapshot()
+        self.assertEqual(mind.calls, [])
+        self.assertEqual(failed['runtime'], {'state': 'failed', 'turn_id': None})
+        self.assertEqual(failed['errors']['code'], 'ContextBudgetExceeded')
+        self.assertIsNone(failed['context']['frame_bytes'])
+        await (await runtime.submit_perceptions(batch(perception('short', content='Latest'))))
+        self.assertEqual([m['role'] for m in mind.calls[0]], ['system', 'user'])
+        self.assertEqual(runtime.snapshot()['runtime']['state'], 'idle')
+        self.assertEqual(runtime.snapshot()['generation']['last_action'], 'stay_silent')

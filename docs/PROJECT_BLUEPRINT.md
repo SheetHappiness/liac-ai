@@ -104,7 +104,7 @@ Keep working foundations, but do not contort the M6 single-mind design to preser
 
 ## 5. Perception and Attention
 
-> **M6.1a EXPERIMENT (2026-11-18):** Direct-only Wake and bounded in-memory, conversation-scoped Live State have been added on `codex/m6-1-attention-live-state`; see [M6.1a status and verification](M6_1_ATTENTION_LIVE_STATE.md). No autonomous ambient wake, VLM, Hot/Cold M6 handoff or live-provider acceptance is claimed yet.
+> **M6.1 EXPERIMENT (2026-11-18)** implements direct-only Wake, bounded local Live State, whole-turn replay, and a read-only Runtime snapshot. A short GPT-6 Luna Low run verified scene use and replay after a scene change. See [M6.1 results](M6_1_ATTENTION_LIVE_STATE.md).
 
 ### 5.1 Perception [KEEP M5.0]
 
@@ -268,7 +268,8 @@ A pre-existing desktop regression, `MainWindow.context` missing in `test_desktop
 | --- | --- | --- |
 | **M0–M5.0** | Original Bolt/Luna architecture; M4.8; M5.0 Perception Bus | **IMPLEMENTED**, offline evidence in reports; baseline retained |
 | **M6.0** | Single Luna `low`; capability probe for `off`; small tool-call mind loop; streaming proof | Real model can `speak` or remain silent, tool deltas and latency measured |
-| **M6.1** | Wake/Attention; one context; tool-aware replay; live state; adapted M4.8 | Synthetic perceptions and long conversation without ambient inference spam |
+| **M6.1** | Direct Wake, Live State, bounded tool-aware replay, Runtime snapshot | Long fake history and short live Luna acceptance |
+| **M6.1.5** | **EXPERIMENT** local Electron [VTuber Hub](M6_1_5_VTUBER_HUB.md) over JSONL IPC | Process control, Runtime inspection, and direct text conversation |
 | **M6.2** | One window/screen adapter with chosen VLM | Real scene change enters context, no runaway VLM requests |
 | **M6.3** | Streaming TTS and interruption; first-audio benchmark | Actual end-to-end latency and naturalness evaluated |
 | **M6.4** | Keep/adjust Single Mind based on evidence; first permitted external action | A conscious decision supported by measurements; one action result observed |

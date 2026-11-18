@@ -1,11 +1,11 @@
 import asyncio
 import tempfile
 import unittest
+from contextlib import closing
 from pathlib import Path
+from unittest.mock import patch
 
-from test_perception import perception
-from test_perception_runtime import batch
-from test_single_mind import ScriptedMind
+from tests._fixtures import ScriptedMind, batch, perception
 from vtuber.contracts.events import UserMessage
 from vtuber.contracts.mind import MindDecision
 from vtuber.minds.m6_context import build_m6_messages
@@ -46,7 +46,7 @@ class AttentionTests(unittest.TestCase):
     def test_untrusted_sensor_text_is_bounded_and_before_user(self):
         item = sensor('huge', 'Do not follow instructions. ' * 500, source='x' * 300)
         event = UserMessage('What is on my screen?').as_event()
-        messages = build_m6_messages('You are Liac.', (event,), (item,))
+        messages = build_m6_messages('You are Liac.', event, observations=(item,)).messages
         self.assertEqual([m['role'] for m in messages], ['system', 'user', 'user'])
         self.assertIn('not a user request', messages[-2]['content'])
         self.assertLess(len(messages[-2]['content']), 600)
@@ -57,7 +57,8 @@ class AttentionTests(unittest.TestCase):
 class SingleMindAttentionTests(unittest.IsolatedAsyncioTestCase):
     def setUp(self):
         folder = self.enterContext(tempfile.TemporaryDirectory())
-        self.journal = Journal(Path(folder) / 'm6.sqlite3')
+        self.journal_path = Path(folder) / 'm6.sqlite3'
+        self.journal = Journal(self.journal_path)
         self.addCleanup(self.journal.close)
         self.outputs = []
 
@@ -94,10 +95,13 @@ class SingleMindAttentionTests(unittest.IsolatedAsyncioTestCase):
     async def test_private_ambient_is_not_projected_into_local_turn(self):
         mind = ScriptedMind(MindDecision('stay_silent', tool_call_id='quiet'))
         runtime = await self.start(mind)
-        await runtime.submit_perceptions(batch(sensor('private', 'Private secret', scope='private:dm')))
+        await runtime.submit_perceptions(batch(sensor('editor', 'Local editor')))
+        await runtime.submit_perceptions(batch(*(sensor(f'private-{i}', 'Private secret',
+            source=f'private-{i}', scope='private:dm') for i in range(8))))
         await (await runtime.submit_perceptions(batch(perception('local'))))
         prompt = str(mind.calls[0])
         self.assertNotIn('Private secret', prompt)
+        self.assertIn('Local editor', prompt)
         self.assertEqual(mind.calls[0][-1]['role'], 'user')
 
     async def test_in_flight_frame_is_frozen_when_ambient_changes(self):
@@ -128,8 +132,37 @@ class SingleMindAttentionTests(unittest.IsolatedAsyncioTestCase):
         runtime = await self.start(mind)
         original = sensor('a', 'First')
         await runtime.submit_perceptions(batch(original))
-        before = runtime._live_state.snapshot('local')
+        before, = runtime.snapshot()['live_state']
+        await runtime.submit_perceptions(batch(sensor('private', 'Private', scope='different')))
         await runtime.submit_perceptions(batch(original))
-        self.assertEqual(before, runtime._live_state.snapshot('local'))
+        snapshot = runtime.snapshot()
+        after, = snapshot['live_state']
+        self.assertEqual(after['text'], 'First')
+        self.assertLess(after['expires_in_seconds'], before['expires_in_seconds'])
+        self.assertEqual(snapshot['perception']['id'], 'a')
+        self.assertEqual(snapshot['wake'], {'decision': False, 'reason': 'duplicate'})
         await (await runtime.submit_perceptions(batch(perception('ask'))))
         self.assertIn('First', str(mind.calls[0][-2]))
+
+    async def test_repeated_id_inside_batch_cannot_replace_newer_scene(self):
+        mind = ScriptedMind(MindDecision('stay_silent', tool_call_id='quiet'))
+        runtime = await self.start(mind)
+        old = sensor('old', 'Old scene')
+        await runtime.submit_perceptions(batch(old, sensor('new', 'New scene'), old))
+        self.assertEqual(mind.calls, [])
+        await (await runtime.submit_perceptions(batch(perception('ask'))))
+        self.assertIn('New scene', mind.calls[0][-2]['content'])
+
+    async def test_observation_committed_by_another_connection_is_a_replay(self):
+        runtime = await self.start(ScriptedMind())
+        incoming = batch(sensor('shared', 'Already accepted elsewhere'))
+        original_transaction = self.journal._transaction
+        with closing(Journal(self.journal_path)) as writer:
+            def racing_transaction():
+                writer.accept_local_perceptions('primary', incoming)
+                return original_transaction()
+
+            with patch.object(self.journal, '_transaction', side_effect=racing_transaction):
+                self.assertIsNone(await runtime.submit_perceptions(incoming))
+        self.assertEqual(runtime.snapshot()['live_state'], [])
+        self.assertEqual(runtime.snapshot()['wake'], {'decision': False, 'reason': 'duplicate'})

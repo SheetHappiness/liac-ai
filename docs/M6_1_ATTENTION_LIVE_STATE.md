@@ -1,42 +1,64 @@
-# M6.1a – Wake and ephemeral Live State
+# M6.1 – Attention, Live State, and bounded context
 
-**Status: EXPERIMENT / implementation pushed, not independently tested.**
-Base: M6.0 branch at `8f726498`. Branch: `codex/m6-1-attention-live-state`.
+**EXPERIMENT** · Opt-in Single Mind path on `codex/m6-1-attention-live-state`.
 
-## What this slice adds
+## Attention and context
 
-The first minimal Perception → Attention → Luna context path:
+- Newly accepted local direct chat wakes Luna once per batch. Ambient observations never start or cancel a turn. Noise is ignored. Replaying a perception ID, including within one batch, cannot refresh Live State or wake Luna again.
+- Live State keeps the latest ambient `state` or `observation` per source and kind for the supported local conversation. It holds up to eight entries in memory with a 120-second monotonic lifetime. Other conversation events can be journaled without displacing local observations. A turn freezes its local view before generation.
+- The context compiler reserves space for the identity and latest user input, then fits the bounded sensor block and a contiguous suffix of up to 20 completed turns. The 63 KiB cap measures compact UTF-8 JSON for the message array, leaving space for the 64 KiB JSONL bridge envelope. If identity and latest input exceed the cap, Runtime records a technical failure before calling Luna.
+- SQLite Journal remains authoritative. M6 joins prior user messages and completed replies by character and turn ID. It projects legacy speech as assistant text and replays both `speak` and `stay_silent` with their original tool-call IDs and matching results. Failed, cancelled, and unfinished turns stay in Journal. Startup closes unfinished turns without regenerating them.
 
-1. Keep the existing `PerceptionBus` and `Journal.accept_local_perceptions` unchanged.
-2. **Wake:** only newly accepted local direct chat starts Luna. Ambient state and noise never cause an inference request or cancel an active generation. `should_wake` makes this conservative policy explicit.
-3. **Live State:** trusted ambient `state` / `observation` inputs update the last value per (conversation, source, kind), in memory. Default 8 entries, 120-second monotonic expiry. No database or background worker. A replayed sensor ID does not refresh the volatile state.
-4. **Attention:** the most recently updated source appears first. `LiveState.snapshot` isolates conversation scopes.
-5. **Context:** the next addressed turn gets a bounded JSON-quoted sensor summary **before** the actual user message. Each entry's source and text are truncated; the outer 63-KiB bridge-input budget still applies. The system instruction declares observations untrusted data rather than user commands.
-6. **Frozen inference frame:** an ambient event arriving while Luna generates changes only future snapshots.
-7. **Manual proof:** type `/scene Window shows an error message`, then a normal question in `python -m vtuber.m6 --backend fake` or `--backend luna`. `/scene` updates state without generating a reply.
+[M4.8 Hot/Cold](M4_8_CONTEXT_HANDOFF.md) contributes two rules here. Cut at complete turn boundaries and freeze the selected context for the duration of a request. The recent suffix is the hot history and older events remain available in Journal. Two short live turns provide initial token and timing measurements. Consolidation thresholds and semantic summaries remain future work.
 
-This is intentionally **not** a full Bea Attention score engine, event-triggered initiative, memory migration, VLM, TTS or game tools. Direct-only Wake is the safe initial policy until actual autonomous triggers have typed importance metadata.
+## Monitoring for VTuber Hub
 
-## Source boundaries
+Call `SingleMindRuntime.snapshot()` on its owning asyncio loop. Combine the detached JSON-serializable snapshot with existing `RuntimeOutput` for streaming and terminal events.
 
-- New: `src/vtuber/runtime/attention.py` (`should_wake`, `LiveState`).
-- Updated: `src/vtuber/runtime/single_mind.py`, `src/vtuber/minds/m6_context.py`, `src/vtuber/m6.py`.
-- Tests: `tests/test_m6_attention.py`, `tests/test_m6_cli.py`.
-- No change to the legacy Fast/Deep model roles, storage schema, OMP or Codex bridge. The new path is opt-in.
+| Field | Contents |
+| --- | --- |
+| `runtime` | `idle`, `generating`, or `failed` and the active turn ID |
+| `model` | Model name, reasoning effort, and bridge process status. `running` means the subprocess is alive |
+| `perception`, `wake` | Latest accepted local metadata and latest local wake decision with its reason |
+| `live_state` | Current local observations with bounded text and remaining lifetime in seconds |
+| `context` | Last compiled turn ID, message-array bytes, included historical turn count, sensor inclusion, and whether older completed history was omitted |
+| `generation` | Turn ID, bridge first tool delta and duration, Runtime duration, model usage, and last completed action |
+| `errors` | Last technical error code and turn ID |
 
-## Verification to perform locally
+Missing measurements are null. The bridge reports provider timings with the completed result. Runtime updates terminal diagnostics after the Journal commit and before publishing the terminal output.
+
+## Fake and local acceptance
+
+On Windows with Python 3.14, all 58 focused tests passed. The full suite passed 205 of 206 tests. The sole error also reproduced at the baseline in `test_desktop.WindowTests.test_chat_context_selection_and_offline_history` because the test still reads `MainWindow.context`. Both the M6 fake CLI and legacy Fast/Deep fake CLI exited successfully after one committed reply in separate temporary databases.
+
+| Scenario | Result |
+| --- | --- |
+| Direct chat → `speak` | One generation and one committed reply |
+| `/scene` only | Live State updated with no request |
+| `/scene` followed by a question | Sensor block appeared immediately before the latest input |
+| Ambient update during generation | Active frame stayed fixed and the next turn received the update |
+| `stay_silent` | Committed as an empty reply with no visible final speech |
+| Restart | Earlier tool history replayed on the next user input and unfinished turns did not restart |
+| Long history | Completed turns stayed intact under both the byte and turn caps |
+
+Run focused or full checks from the repository root with the project dependencies installed.
 
 ```powershell
-$env:PYTHONPATH='src;tests;vendor/omp-rpc/src'
-python -m unittest test_m6_attention test_m6_context test_single_mind test_m6_cli test_perception_runtime -v
+$env:PYTHONPATH='src;vendor/omp-rpc/src'
+python -m unittest tests.test_m6_attention tests.test_m6_context tests.test_single_mind tests.test_m6_cli tests.test_perception_runtime tests.test_luna_stream -v
+$env:QT_QPA_PLATFORM='offscreen'
 python -m unittest discover -s tests -v
-python -m vtuber.m6 --backend fake --db .data/m6-1-fake.sqlite3
 ```
 
-In the console, enter `/scene Browser displays a red warning` and then `What do you notice?`. Verify one response, no standalone scene-triggered speech, and a `CURRENT SENSOR STATE` block in the captured model frame.
+## Live GPT-6 Luna Low acceptance
 
-**Verification status:** source-level review only in this session. No repository-local test runtime or authenticated Luna credentials were available here. **Do not mark tests or live latency as passed without running them.** M6.0's previously recorded baseline was 188/189 Python tests, with one existing Desktop error.
+A two-turn check used the Python M6 console path, the existing authenticated Bun bridge, synthetic input, and a temporary Journal. Each standalone scene update produced zero requests. Luna named the blue mug from the first scene, then recalled the blue mug from its prior `speak` turn after the current scene switched to a green notebook.
 
-## Next slice
+| Turn | Frame bytes | Prior turns | Input tokens | Output tokens | Cache read | Cache write | First tool delta | Bridge duration | Runtime duration |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| Scene question | 631 | 0 | 166 | 26 | 0 | 0 | 2,474 ms | 2,782 ms | 2,998 ms |
+| Follow-up after scene change | 1,577 | 1 | 236 | 23 | 0 | 0 | 1,849 ms | 2,155 ms | 2,157 ms |
 
-M6.1b: evaluate longer Hot/Cold context replay from M4.8 against real Luna's context and cache measurements, then introduce a carefully scoped exceptional Wake trigger **only when a real VLM/game source supplies meaningful change metadata**. Keep the current direct-only policy otherwise. M6.2 is screen VLM; M6.3 is TTS and first-audio timing.
+The live check covered two short spoken turns. Silence, restart, in-flight scene changes, and long history were exercised with fakes.
+
+[M6.1.5 VTuber Hub](M6_1_5_VTUBER_HUB.md) uses this snapshot and `RuntimeOutput` over local JSONL IPC. VLM and TTS follow the Hub.
