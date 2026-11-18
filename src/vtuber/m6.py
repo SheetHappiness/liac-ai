@@ -51,7 +51,7 @@ async def run_console(db: Path, mind: SingleMindPort) -> None:
             if latest is not None:
                 await latest
 
-        print('Liac Single Mind | Enter text or /quit.', flush=True)
+        print('Liac Single Mind | Enter text, /scene <description> or /quit.', flush=True)
         try:
             async with asyncio.TaskGroup() as tasks:
                 tasks.create_task(drain(), name='m6-perception-drain')
@@ -61,9 +61,15 @@ async def run_console(db: Path, mind: SingleMindPort) -> None:
                             if line.strip() in ('/quit', '/exit'):
                                 break
                             if line.strip():
+                                scene = line.strip().startswith('/scene ')
+                                content = line.strip()[7:] if scene else line
+                                if not content.strip():
+                                    continue
                                 try:
-                                    await bus.publish(Perception(new_id('perception'), 'chat', 'local', 'local',
-                                                                 line, utc_now(), delivery='direct'))
+                                    await bus.publish(Perception(new_id('perception'),
+                                        'state' if scene else 'chat',
+                                        'manual:scene' if scene else 'local', 'local',
+                                        content, utc_now(), delivery='ambient' if scene else 'direct'))
                                 except PerceptionQueueFull as error:
                                     print(str(error), flush=True)
                 finally:
