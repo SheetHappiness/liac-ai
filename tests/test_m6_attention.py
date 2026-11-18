@@ -3,9 +3,9 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from tests._fixtures import perception
-from tests._fixtures import batch
-from tests._fixtures import ScriptedMind
+from test_perception import perception
+from test_perception_runtime import batch
+from test_single_mind import ScriptedMind
 from vtuber.contracts.events import UserMessage
 from vtuber.contracts.mind import MindDecision
 from vtuber.minds.m6_context import build_m6_messages
