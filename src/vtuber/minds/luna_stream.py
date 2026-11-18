@@ -97,7 +97,14 @@ class LunaStream:
                         else:
                             raise LunaStreamError("invalid_frame")
             except asyncio.CancelledError:
-                await self._cancel(process, identifier)
+                # Drain the cancelled turn while holding the process lock, even if cancelled again.
+                cleanup = asyncio.create_task(self._cancel(process, identifier))
+                while not cleanup.done():
+                    try:
+                        await asyncio.shield(cleanup)
+                    except asyncio.CancelledError:
+                        continue
+                cleanup.result()
                 raise
             except (OSError, TimeoutError, UnicodeError):
                 await self._stop()

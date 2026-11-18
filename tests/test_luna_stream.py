@@ -8,25 +8,29 @@ from vtuber.minds.luna_stream import LunaStream, LunaStreamError
 
 
 FIXTURE = """
-import json, sys
+import json, sys, time
+slow_cancel = False
 for line in sys.stdin:
     frame = json.loads(line)
     kind = frame["type"]
     if kind == "shutdown":
         break
     identifier = frame["id"]
-    def send(kind, **fields):
-        print(json.dumps(dict(type=kind, id=identifier, **fields)), flush=True)
+    def send(frame_type, **fields):
+        print(json.dumps(dict(type=frame_type, id=identifier, **fields)), flush=True)
     if kind == "cancel":
+        if slow_cancel:
+            time.sleep(0.3)
         send("speak_delta", text="stale")
-        send("error", kind_unused="cancelled")
+        send("error", kind="cancelled")
         continue
     assert frame["system"] == "Identity"
     assert frame["reasoning"] == "low"
     text = frame["messages"][0]["content"]
     if text == "error":
         print(json.dumps(dict(type="error", id=identifier, kind="provider_error")), flush=True)
-    elif text == "cancel":
+    elif text in ("cancel", "cancel_twice"):
+        slow_cancel = text == "cancel_twice"
         send("speak_delta", text="early")
     elif text == "invalid":
         send("result", action="speak", message="", tool_call_id="call_1")
@@ -75,6 +79,17 @@ class LunaStreamTests(unittest.IsolatedAsyncioTestCase):
         with self.assertRaises(asyncio.CancelledError):
             await task
         self.assertEqual(deltas, ["early"])
+        self.assertEqual((await self.generate("silence")).action, "stay_silent")
+
+    async def test_repeated_cancellation_drains_old_turn_before_next(self):
+        first = asyncio.Event()
+        task = asyncio.create_task(self.generate("cancel_twice", lambda _: first.set()))
+        await asyncio.wait_for(first.wait(), 2)
+        task.cancel()
+        await asyncio.sleep(0.05)
+        task.cancel()
+        with self.assertRaises(asyncio.CancelledError):
+            await task
         self.assertEqual((await self.generate("silence")).action, "stay_silent")
 
     async def test_close_joins_owned_process(self):

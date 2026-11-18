@@ -28,3 +28,17 @@ test("preview cannot authorize malformed, incomplete or mismatched arguments", (
     assert.equal(completedArguments("stay_silent", '{"message":"x"}', {}), null);
     assert.deepEqual(completedArguments("stay_silent", "{}", {}), {});
 });
+
+test("rejects duplicate fields and final objects without raw argument evidence", () => {
+    const stream = new SpeakStream();
+    const raw = '{"message":"first","message":"second"}';
+    assert.equal(stream.push(0, "speak", raw), "first");
+    assert.equal(completedArguments("speak", raw, { message: "second" }), null);
+    assert.equal(completedArguments("speak", "", { message: "repaired" }), null);
+    assert.equal(completedArguments("stay_silent", "", {}), null);
+});
+
+test("never previews an invalid UTF-16 code unit", () => {
+    const stream = new SpeakStream();
+    assert.equal(stream.push(0, "speak", '{"message":"\\uDE00"}'), "");
+});

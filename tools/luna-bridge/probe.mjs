@@ -132,6 +132,9 @@ let stage = "dependency_load";
 let storage;
 try {
     process.env.PI_CODING_AGENT_DIR = fileURLToPath(authDir);
+    delete process.env.PI_REQ_DEBUG;
+    // pi-ai 18.22.1 uses this guard to suppress automatic 400/413 request dumps.
+    process.env.PI_TEST_RUNTIME = "1";
     const { AuthStorage, streamSimple } = await import("@oh-my-pi/pi-ai");
     const { fetchCodexModels, getBundledModels, getSupportedEfforts } = await import("@oh-my-pi/pi-catalog");
     stage = "catalog_lookup";
