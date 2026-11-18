@@ -1,10 +1,14 @@
 import unittest
 from dataclasses import FrozenInstanceError, replace
 
-from vtuber.contracts.perception import PerceptionBatch
+from vtuber.contracts.perception import Perception, PerceptionBatch
 
 
-from tests._fixtures import perception
+def perception(identifier='p1', **changes):
+    values = dict(perception_id=identifier, kind='chat', source='local',
+                  conversation_key='local', content='hello',
+                  occurred_at='2026-11-17T12:00:00+00:00', delivery='direct')
+    return Perception(**(values | changes))
 
 
 class PerceptionTests(unittest.TestCase):
