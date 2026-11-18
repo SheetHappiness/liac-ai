@@ -62,6 +62,22 @@ class M6ConsoleTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(reply.payload['action'], 'stay_silent')
         self.assertNotIn('[Final]', self.output.getvalue())
 
+
+    async def test_manual_scene_updates_next_context_without_speaking(self):
+        async def lines():
+            yield '/scene Window shows a puzzle'
+            yield 'What is visible?'
+            yield '/quit'
+
+        mind = ScriptedMind(MindDecision('speak', 'A puzzle.', 'call-scene'))
+        with patch('vtuber.m6.input_lines', lines):
+            await run_console(self.db, mind)
+        self.assertEqual(len(mind.calls), 1)
+        self.assertIn('Window shows a puzzle', str(mind.calls[0][-2]))
+        self.assertEqual(mind.calls[0][-1]['content'], 'What is visible?')
+        self.assertEqual(len(self.events('user.message.completed')), 1)
+        self.assertEqual(len(self.events('character.reply.completed')), 1)
+
     async def test_stdin_keeps_reading_during_generation(self):
         entered = asyncio.Event()
 
