@@ -1,3 +1,4 @@
+import json
 import unittest
 from contextlib import closing
 from dataclasses import replace
@@ -67,3 +68,14 @@ class M6ContextTests(unittest.TestCase):
         self.assertTrue(system['content'].startswith('You are Liac.'))
         self.assertIn('stay_silent', system['content'])
         self.assertEqual((user['role'], user['content']), ('user', 'Latest'))
+
+    def test_oversized_history_cannot_block_next_turn(self):
+        oversized = '⚙"' * 20_000
+        current = UserMessage('Latest').as_event()
+        previous = reply('Short reply', action='speak', tool_call_id='call_previous')
+        messages = build_m6_messages('Identity', (UserMessage(oversized).as_event(), previous, current))
+        self.assertEqual([message['role'] for message in messages], ['system', 'assistant', 'toolResult', 'user'])
+        self.assertEqual(messages[-1]['content'], 'Latest')
+        self.assertLess(len(json.dumps(messages, ensure_ascii=False).encode()), 64 * 1024)
+        with self.assertRaises(ValueError):
+            build_m6_messages('Identity', (UserMessage(oversized).as_event(),))

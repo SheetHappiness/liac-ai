@@ -122,12 +122,14 @@ pending input and finish the last turn. `[Provisional]` marks streaming text.
 `[Final]` shows the completed reply. Silence produces no spoken line.
 
 Keep the experiment on its own ignored SQLite file. The M6 prompt uses the
-character identity, one short operating instruction and the last 40 canonical
+character identity, one short operating instruction and up to 40 recent canonical
 dialogue events. Only completed M6 tool calls replay as matched call/result
 pairs. Legacy replies remain plain assistant text. Ambient events stay in the
 Journal. On restart, unfinished inputs close as cancelled without regeneration.
-The bridge caps JSONL frames at 64 KiB. The M5.0 CLI keeps its original entry
-point and flags.
+The projection keeps the newest event suffix that fits a 63 KiB JSON budget,
+leaving room in the 64 KiB bridge frame. Each tool call stays paired with its
+result. Oversized current input closes as failed, and later short inputs can
+still run. The M5.0 CLI keeps its original entry point and flags.
 
 ## End-to-end acceptance
 
@@ -158,6 +160,10 @@ cache reads and writes, with zero provider or tool-validation failures. The
 sample is too small for a useful p95. `off` remains unavailable on this route.
 An additional `python -m vtuber.m6 --backend luna` entry-point smoke with a
 separate scratch database rendered a completed text reply and exited cleanly.
+After adding the history budget, a synthetic oversized input closed as failed
+and a subsequent short prompt completed with real Luna in the same database.
+An offline pi-ai payload inspection confirmed the replayed call and result IDs
+matched on the wire for both actions and the latest user text appeared once.
 
 Offline verification:
 
@@ -168,9 +174,9 @@ node --test tools/luna-bridge/speak_stream.test.mjs tools/luna-bridge/request_pr
 git diff --check
 ```
 
-The focused Python run passed 40 tests and Node passed seven. The fake console
+The focused Python run passed 41 tests and Node passed seven. The fake console
 smoke grouped two quick lines into one reply and closed with zero unfinished
-inputs. The full Python suite passed 187 of 188 tests. Its only error remained
+inputs. The full Python suite passed 188 of 189 tests. Its only error remained
 the baseline `MainWindow.context` desktop regression.
 
 This milestone leaves Wake/Attention, Live State, VLM, M4.8 compaction
