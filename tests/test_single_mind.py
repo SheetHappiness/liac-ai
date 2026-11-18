@@ -6,8 +6,7 @@ from dataclasses import replace
 from pathlib import Path
 from unittest.mock import patch
 
-from test_perception import perception
-from test_perception_runtime import batch
+from test_perception import batch, perception
 from vtuber.contracts.events import Event
 from vtuber.contracts.mind import MindDecision
 from vtuber.minds.m6_context import PERCEPTION_FRAME
@@ -104,8 +103,7 @@ class SingleMindRuntimeTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(user.payload['perception_ids'], [e.event_id for e in self.events('perception.received')])
         self.assertEqual(terminal.event_id, f'reply_terminal_{user.event_id}')
         self.assertEqual(terminal.turn_id, user.turn_id)
-        self.assertEqual(terminal.payload, {'text': 'Hello!', 'action': 'speak', 'tool_call_id': 'speak-id',
-                                            'snapshot_revision': 0})
+        self.assertEqual(terminal.payload, {'text': 'Hello!', 'action': 'speak', 'tool_call_id': 'speak-id'})
         self.assertEqual([(out.kind, out.text) for out in self.outputs], [
             ('reply.started', ''), ('reply.delta', 'Hel'), ('reply.delta', 'lo!'), ('reply.completed', 'Hello!')])
         self.assertEqual([out.delta_index for out in self.outputs if out.kind == 'reply.delta'], [1, 2])
@@ -147,6 +145,7 @@ class SingleMindRuntimeTests(unittest.IsolatedAsyncioTestCase):
             first_callbacks[0]('Late')
             self.assertEqual(len(self.events('character.reply.completed')), 1)
             self.assertEqual([item['perception_id'] for item in frame(messages[-1])], ['busy-1', 'busy-2'])
+            self.assertEqual([item['author_id'] for item in frame(messages[-1])], ['alex', 'sam'])
             self.assertEqual([item['perception_id'] for item in frame(messages[1])], ['first'])
             return MindDecision('stay_silent', tool_call_id='second-id')
 
@@ -154,9 +153,9 @@ class SingleMindRuntimeTests(unittest.IsolatedAsyncioTestCase):
         runtime = await self.start(mind, bus=bus)
         await runtime.publish(perception('first'))
         await asyncio.wait_for(entered.wait(), 1)
-        await runtime.publish(perception('busy-1'))
+        await runtime.publish(perception('busy-1', author_id='alex'))
         await asyncio.sleep(.23)
-        await runtime.publish(perception('busy-2'))
+        await runtime.publish(perception('busy-2', author_id='sam'))
         await asyncio.sleep(.23)
         self.assertEqual(len(mind.calls), 1)
         self.assertIsNone(self.journal.get('busy-1'))
@@ -323,8 +322,8 @@ class SingleMindRuntimeTests(unittest.IsolatedAsyncioTestCase):
     async def test_restart_closes_unfinished_without_regeneration(self):
         bus = PerceptionBus(text_gap=0)
         before, after = perception('accepted'), perception('already-visible')
-        before_start = self.journal.accept_local_perceptions('primary', batch(before), grouped_frame=True)
-        after_start = self.journal.accept_local_perceptions('primary', batch(after), grouped_frame=True)
+        before_start = self.journal.accept_local_perceptions('primary', batch(before))
+        after_start = self.journal.accept_local_perceptions('primary', batch(after))
         self.journal.append(Event.create('primary', 'character.reply.started', {'snapshot_revision': 7},
                             event_id=f'reply_started_{after_start.event_id}', turn_id=after_start.turn_id,
                             causation_id=after_start.event_id))
@@ -337,7 +336,7 @@ class SingleMindRuntimeTests(unittest.IsolatedAsyncioTestCase):
         recovered = self.events('character.reply.cancelled')
         self.assertEqual([e.causation_id for e in recovered], [before_start.event_id, after_start.event_id])
         self.assertEqual([e.payload for e in recovered], [
-            {'reason': 'process_restarted', 'snapshot_revision': revision} for revision in (0, 7)])
+            {'reason': 'process_restarted'}, {'reason': 'process_restarted'}])
         self.assertFalse(mind.calls)
         self.assertFalse(self.outputs)
         self.assertEqual(self.journal.unfinished_inputs('primary'), ())

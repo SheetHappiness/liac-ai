@@ -1,43 +1,9 @@
-import asyncio
 import json
-import re
 from collections.abc import Callable
-from dataclasses import dataclass
-from typing import AsyncGenerator
 
-from vtuber.contracts.events import UserMessage, FastInput, new_id
+from vtuber.contracts.events import new_id
 from vtuber.contracts.mind import MindDecision
-from vtuber.contracts.state import FastSnapshot
-from vtuber.contracts.deep import DeepRequest, DeepResult
 from vtuber.minds.m6_context import PERCEPTION_FRAME
-
-
-@dataclass(frozen=True)
-class FakeFast:
-    delay: float = 0.03
-
-    async def stream(self, snapshot: FastSnapshot, message: FastInput) -> AsyncGenerator[str, None]:
-        origin = f'You said: {message.text}' if isinstance(message, UserMessage) else f'Character initiative: {message.intent}'
-        text = (f"[r{snapshot.state.revision}] {origin} | "
-                f"note: {snapshot.state.context_note or '(none)'}")
-        for chunk in re.findall(r"\S+\s*", text):
-            await asyncio.sleep(self.delay)
-            yield chunk
-
-
-@dataclass(frozen=True)
-class FakeDeep:
-    delay: float = 2.0
-
-    async def propose(self, request: DeepRequest) -> DeepResult:
-        await asyncio.sleep(self.delay)
-        events = request.events
-        messages = [event for event in events if event.kind == "user.message.completed"]
-        if not messages:
-            return DeepResult(3, request.request_id)
-        latest = messages[-1]
-        return DeepResult(3, request.request_id,
-                          f"Last user message: {latest.payload['text'][:160]}")
 
 
 class FakeSingleMind:

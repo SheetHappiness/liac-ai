@@ -1,22 +1,27 @@
-"""Local engineering inspector; transport contains no state mutation policy."""
+"""Local console for the Liac Single Mind runtime."""
 
 import argparse
 import asyncio
 import codecs
 import concurrent.futures
+import shutil
 import sys
 import threading
-from contextlib import aclosing
-from dataclasses import asdict
+from collections.abc import AsyncIterator
+from contextlib import aclosing, closing
+from importlib.resources import files
 from pathlib import Path
-from typing import AsyncIterator
 
-import httpx
-
-from vtuber.app import Config, list_models, open_runtime
-from vtuber.contracts.events import RuntimeOutput, UserMessage, canonical_json
-from vtuber.minds.lmstudio import LMStudioSettings, StreamProtocolError
-from vtuber.minds.omp import OMPSettings
+from vtuber.contracts.events import RuntimeOutput, new_id, utc_now
+from vtuber.contracts.mind import SingleMindPort
+from vtuber.contracts.perception import Perception
+from vtuber.contracts.trace import TraceSink
+from vtuber.minds.fake import FakeSingleMind
+from vtuber.minds.luna_stream import LunaStream
+from vtuber.runtime.journal import Journal
+from vtuber.runtime.perception_bus import PerceptionQueueFull
+from vtuber.runtime.single_mind import SingleMindRuntime
+from vtuber.tracing import QueuedTraceRecorder
 
 
 async def input_lines() -> AsyncIterator[str]:
@@ -86,130 +91,86 @@ async def input_lines() -> AsyncIterator[str]:
 
 class ConsoleOutput:
     def __init__(self) -> None:
-        self.streaming = False
+        self._previewing = False
 
     def __call__(self, output: RuntimeOutput) -> None:
-        if output.kind == "reply.started":
-            print(f"\nFast {output.turn_id} r{output.revision}: ", end="", flush=True)
-            self.streaming = True
-        elif output.kind == "reply.delta":
-            print(output.text, end="", flush=True)
-        elif output.kind.startswith("reply."):
-            detail = f": {output.text}" if output.kind == "reply.failed" else ""
-            print(f"\n[{output.kind}{detail}]", flush=True)
-            self.streaming = False
-        else:
-            if self.streaming:
-                print()
-            print(f"[{output.kind} r{output.revision}: {output.text}]", flush=True)
+        if output.kind == 'reply.delta':
+            prefix = '' if self._previewing else '[Provisional] '
+            print(prefix + output.text, end='', flush=True)
+            self._previewing = True
+        elif output.kind in ('reply.completed', 'reply.cancelled', 'reply.failed'):
+            if self._previewing:
+                print(flush=True)
+                self._previewing = False
+            if output.kind == 'reply.completed' and output.text:
+                print(f'[Final] {output.text}', flush=True)
+            elif output.kind in ('reply.cancelled', 'reply.failed'):
+                print(f'[{output.kind.removeprefix("reply.").capitalize()}] {output.text}', flush=True)
 
 
-HELP = "Text sends a message. /state /events [count] /status /context /metrics /retry /help /quit"
+async def run_console(db: Path, mind: SingleMindPort, *, trace: TraceSink | None = None) -> None:
+    identity = files('vtuber.minds').joinpath('character.md').read_text(encoding='utf-8')
+    with closing(Journal(db)) as journal:
+        runtime = SingleMindRuntime('primary', journal, mind, ConsoleOutput(), identity=identity, trace=trace)
+        await runtime.start()
+
+        print('Liac Single Mind | Enter text or /quit.', flush=True)
+        try:
+            async with asyncio.TaskGroup() as tasks:
+                tasks.create_task(runtime.run(), name='m6-consciousness')
+                try:
+                    async with aclosing(input_lines()) as lines:
+                        async for line in lines:
+                            if line.strip() in ('/quit', '/exit'):
+                                break
+                            if line.strip():
+                                try:
+                                    await runtime.publish(Perception(new_id('perception'), 'chat', 'local', 'local',
+                                        line, utc_now(), delivery='direct', author_id='local'))
+                                except PerceptionQueueFull as error:
+                                    print(str(error), flush=True)
+                finally:
+                    await runtime.finish_input()
+        finally:
+            await runtime.close()
 
 
-async def run(config: Config) -> None:
-    async with open_runtime(config, ConsoleOutput()) as runtime:
-        print(f"Character Runtime | fast={config.fast_backend} | deep={config.deep_backend} | "
-              f"character={config.character_id} | db={config.db}", flush=True)
-        print(HELP, flush=True)
-        async with aclosing(input_lines()) as lines:
-            async for line in lines:
-                user_text = line
-                line = line.strip()
-                if not line:
-                    continue
-                if line in ("/quit", "/exit"):
-                    break
-                if line == "/help":
-                    print(HELP, flush=True)
-                elif line == "/state":
-                    print(canonical_json(asdict(runtime.journal.snapshot(config.character_id))), flush=True)
-                elif line == "/status":
-                    print(canonical_json({
-                        "deep_cursor": runtime.journal.cursor(config.character_id),
-                        "journal_sequence": runtime.journal.high_watermark(config.character_id),
-                        "deep_error": runtime.deep_error,
-                        "deep": runtime.deep_diagnostics,
-                        "context_epoch": {"version": runtime.journal.context_epoch(config.character_id).version,
-                            "cutoff": runtime.journal.context_epoch(config.character_id).compacted_through_sequence},
-                        "fast": runtime.fast_diagnostics,
-                        "last_cancellation_ms": runtime.last_cancellation_ms,
-                    }), flush=True)
-                elif line == "/context":
-                    print(canonical_json(runtime.fast_diagnostics.get("context", {})), flush=True)
-                elif line == "/metrics":
-                    print(canonical_json({"generation": runtime.fast_diagnostics.get("generation"),
-                        "deep": runtime.deep_diagnostics,
-                        "preparation_ms": runtime.fast_diagnostics.get("preparation_ms"),
-                        "last_cancellation_ms": runtime.last_cancellation_ms}), flush=True)
-                elif line == "/retry":
-                    runtime.retry_deep()
-                    print("Deep notified", flush=True)
-                elif line.split()[0] == "/events":
-                    try:
-                        parts = line.split()
-                        count = int(parts[1]) if len(parts) == 2 else 10 if len(parts) == 1 else 0
-                        if not 1 <= count <= 100:
-                            raise ValueError
-                    except ValueError:
-                        print("Usage: /events [1..100]", flush=True)
-                        continue
-                    high = runtime.journal.high_watermark(config.character_id)
-                    for event in runtime.journal.read(config.character_id, after=max(0, high - count)):
-                        print(canonical_json({"sequence": event.sequence, "event_id": event.event_id,
-                            "turn_id": event.turn_id, "kind": event.kind, "payload": event.payload}), flush=True)
-                elif line.startswith("/"):
-                    print(f"Unknown command. {HELP}", flush=True)
-                else:
-                    await runtime.submit(UserMessage(user_text, config.character_id))
-    print("Runtime stopped; journal closed.", flush=True)
+async def _run(db: Path, mind: SingleMindPort, *, trace: bool) -> None:
+    recorder = QueuedTraceRecorder(Path('.data/traces')) if trace else None
+    try:
+        await run_console(db, mind, trace=recorder)
+    finally:
+        try:
+            if isinstance(mind, LunaStream):
+                await mind.close()
+        finally:
+            if recorder is not None:
+                await recorder.aclose()
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Character Runtime: fake or local Nemotron Fast; fake Deep")
-    parser.add_argument("--db", type=Path, default=Config.db)
-    parser.add_argument("--character", default="primary")
-    parser.add_argument("--fast-delay", type=float, default=0.03, help="seconds per fake chunk")
-    parser.add_argument("--deep-delay", type=float, default=2.0, help="seconds per fake batch")
-    parser.add_argument("--deep-timeout", type=float, default=60.0)
-    parser.add_argument('--deep-backend', choices=('fake', 'luna'), default='fake')
-    parser.add_argument('--omp-executable', default='omp')
-    parser.add_argument('--luna-model', default='openai-codex/gpt-6-luna')
-    parser.add_argument('--luna-data', type=Path, default=OMPSettings.data_dir)
-    parser.add_argument("--fast-backend", choices=("fake", "lmstudio"), default="fake")
-    parser.add_argument("--endpoint", default=LMStudioSettings.endpoint, help="LM Studio server origin")
-    parser.add_argument("--model", default="", help="loaded instance ID from --list-models")
-    parser.add_argument("--context-tokens", type=int, default=16384)
-    parser.add_argument("--working-context-tokens", type=int, default=2048)
-    parser.add_argument('--enable-initiative', action='store_true', help='allow Luna to direct autonomous speech')
-    parser.add_argument("--max-output-tokens", type=int, default=512)
-    parser.add_argument("--temperature", type=float, default=1.0)
-    parser.add_argument("--top-p", type=float, default=0.95)
-    parser.add_argument("--connect-timeout", type=float, default=2.0)
-    parser.add_argument("--read-timeout", type=float, default=15.0, help="seconds without response data")
-    parser.add_argument("--generation-timeout", type=float, default=45.0, help="total seconds including preflight")
-    parser.add_argument("--identity", type=Path, help="UTF-8 Markdown; loaded at process start")
-    parser.add_argument("--tokenizer", type=Path, default=Config.tokenizer, help="pinned local tokenizer.json")
-    parser.add_argument("--list-models", action="store_true", help="inspect server models/loaded instances and exit")
+    parser = argparse.ArgumentParser(description='Liac Single Mind text console')
+    parser.add_argument('--backend', choices=('fake', 'luna'), default='fake')
+    parser.add_argument('--db', type=Path, help='SQLite database (default depends on backend)')
+    parser.add_argument('--reasoning', choices=('low',), default='low')
+    parser.add_argument('--bun', default='bun', help='Bun executable for the Luna backend')
+    parser.add_argument('--trace', action='store_true', help='Record scheduling metadata in .data/traces')
     args = parser.parse_args()
     try:
-        settings = LMStudioSettings(args.endpoint, args.model, args.max_output_tokens,
-            args.temperature, args.top_p, args.connect_timeout, args.read_timeout, args.generation_timeout)
-        if args.list_models:
-            print(canonical_json(asyncio.run(list_models(settings))))
-            return
-        config = Config(args.db, args.character, args.fast_delay, args.deep_delay, args.deep_timeout,
-                        args.fast_backend, settings, args.context_tokens, args.identity, args.tokenizer,
-                        args.deep_backend, OMPSettings(args.omp_executable, args.luna_model, args.luna_data),
-                        working_context_tokens=args.working_context_tokens, initiative_enabled=args.enable_initiative)
-    except ValueError as error:
-        parser.error(str(error))
-    except (httpx.HTTPError, TimeoutError) as error:
-        parser.exit(1, f"LM Studio connection failed ({type(error).__name__}); "
-                    "check --endpoint, server status and LMSTUDIO_API_TOKEN.\n")
-    try:
-        asyncio.run(run(config))
+        if args.backend == 'fake':
+            asyncio.run(_run(args.db or Path('.data/m6-fake.sqlite3'), FakeSingleMind(), trace=args.trace))
+        else:
+            bun = shutil.which(args.bun)
+            if bun is None:
+                parser.error('Luna requires Bun on PATH or an explicit --bun executable')
+            bridge = Path(__file__).resolve().parents[2] / 'tools/luna-bridge/bridge.mjs'
+            if not bridge.is_file():
+                parser.error('Run the Luna backend from the Liac source checkout with its bridge installed')
+            mind = LunaStream((bun, '--no-env-file', str(bridge)), reasoning=args.reasoning)
+            asyncio.run(_run(args.db or Path('.data/m6-0.sqlite3'), mind, trace=args.trace))
     except KeyboardInterrupt:
-        print("\nRuntime interrupted; resources closed.")
-    except (OSError, ValueError, StreamProtocolError, httpx.HTTPError, TimeoutError) as error:
-        parser.exit(1, f"Runtime setup failed ({type(error).__name__}): {error}\n")
+        print('\nSingle Mind interrupted.', flush=True)
+
+
+if __name__ == '__main__':
+    main()

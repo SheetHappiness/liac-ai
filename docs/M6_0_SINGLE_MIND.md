@@ -2,6 +2,9 @@
 
 Status **EXPERIMENT**. Base `fa7c5d7` in SheetHappiness/liac-ai.
 
+This report records the original M6.0 experiment. The
+[README](../README.md) describes the current console setup.
+
 ## Task 1 transport decision
 
 **GO with Bun.** Node 22.23.3 passes the syntax check but cannot load the

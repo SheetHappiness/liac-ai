@@ -11,6 +11,10 @@ def perception(identifier='p1', **changes):
     return Perception(**(values | changes))
 
 
+def batch(*items: Perception) -> PerceptionBatch:
+    return PerceptionBatch(items[0].conversation_key, items, 'quiet')
+
+
 class PerceptionTests(unittest.TestCase):
     def test_frozen_records_preserve_text_and_author_identity(self):
         item = perception(content='Display name: Alex\n  original text  ', author_id='user-42')

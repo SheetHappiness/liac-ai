@@ -1,5 +1,7 @@
 import asyncio
 import io
+import subprocess
+import sys
 import tempfile
 import unittest
 from contextlib import closing, redirect_stdout
@@ -8,8 +10,26 @@ from unittest.mock import patch
 
 from test_single_mind import ScriptedMind
 from vtuber.contracts.mind import MindDecision
-from vtuber.m6 import FakeSingleMind, run_console
+from vtuber.cli import FakeSingleMind, run_console
 from vtuber.runtime.journal import Journal
+
+
+class EntryPointTests(unittest.TestCase):
+    def test_default_and_m6_alias_start_the_same_runtime(self):
+        with tempfile.TemporaryDirectory() as folder:
+            for module in ('vtuber', 'vtuber.m6'):
+                with self.subTest(module=module):
+                    db = Path(folder) / f'{module}.sqlite3'
+                    result = subprocess.run(
+                        (sys.executable, '-m', module, '--db', str(db)),
+                        input='Hello\n/quit\n', capture_output=True, text=True, timeout=10,
+                    )
+                    self.assertEqual(result.returncode, 0, result.stderr)
+                    self.assertIn('Liac Single Mind', result.stdout)
+                    self.assertIn('[Final] You said: Hello', result.stdout)
+                    with closing(Journal(db)) as journal:
+                        self.assertEqual([e.payload['action'] for e in journal.recent_dialogue('primary')
+                                          if e.kind == 'character.reply.completed'], ['speak'])
 
 
 class M6ConsoleTests(unittest.IsolatedAsyncioTestCase):
@@ -28,7 +48,7 @@ class M6ConsoleTests(unittest.IsolatedAsyncioTestCase):
                 yield line
 
         mind = FakeSingleMind()
-        with patch('vtuber.m6.input_lines', lines), patch.object(mind, 'generate', wraps=mind.generate) as generate:
+        with patch('vtuber.cli.input_lines', lines), patch.object(mind, 'generate', wraps=mind.generate) as generate:
             await run_console(self.db, mind)
         self.assertEqual(generate.await_count, 1)
         user, = self.events('user.message.completed')
@@ -52,7 +72,7 @@ class M6ConsoleTests(unittest.IsolatedAsyncioTestCase):
             await finish.wait()
             return MindDecision('stay_silent', tool_call_id='quiet')
 
-        with patch('vtuber.m6.input_lines', lines):
+        with patch('vtuber.cli.input_lines', lines):
             async with asyncio.TaskGroup() as group:
                 console = group.create_task(run_console(self.db, ScriptedMind(silence)))
                 await asyncio.wait_for(entered.wait(), 2)
@@ -82,7 +102,7 @@ class M6ConsoleTests(unittest.IsolatedAsyncioTestCase):
             return MindDecision('speak', 'First', 'first-id')
 
         mind = ScriptedMind(held, MindDecision('speak', 'Second', 'second-id'))
-        with patch('vtuber.m6.input_lines', lines):
+        with patch('vtuber.cli.input_lines', lines):
             await asyncio.wait_for(run_console(self.db, mind), 5)
         self.assertEqual(self.events('character.reply.cancelled'), ())
         self.assertEqual([event.payload['text'] for event in self.events('user.message.completed')],
@@ -107,7 +127,7 @@ class M6ConsoleTests(unittest.IsolatedAsyncioTestCase):
             await asyncio.Future()
 
         mind = ScriptedMind(held)
-        with patch('vtuber.m6.input_lines', lines):
+        with patch('vtuber.cli.input_lines', lines):
             console = asyncio.create_task(run_console(self.db, mind))
             try:
                 await asyncio.wait_for(queued.wait(), 4)

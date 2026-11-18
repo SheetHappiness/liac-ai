@@ -1,21 +1,9 @@
 # Runtime
 
-Bolt owns personality and decisions; Luna preserves experience; Runtime owns execution. Keep one serialized Deep worker,
-short atomic state/result/cursor transactions and frozen Fast snapshots. No
-transaction spans inference. Technical failures preserve the cursor; audit-only
-and autonomous-only tails cannot create inference loops.
-
-Markdown is applied directly without evidence, revision/epoch approval or
-semantic dependencies. SQLite remains authoritative; context.md is an off-loop
-projection. Startup and changed commits export; close joins owned writes.
-
-Epochs retain complete-turn boundaries, local budgets and monotonic cutoffs.
-Budget-only fallback is explicitly degraded, preserving canonical history and
-pending Luna recovery even after pressure falls or the process restarts.
-
-Initiative is a legacy experimental capability, disabled and outside the M4.7 role
-contract. The opt-in transport remains one pending intent: none preserves, speak replaces, cancel withdraws.
-Keep delay, consume-once, input locking, user priority and owned-task cancellation.
-No relevance guards, TTL, cooldown or revision expiry. Restart cancels pending work
-and unfinished inputs. Trace failures cannot affect domain work. Keep provider
-clients outside Runtime and credentials/configuration out of domain events.
+Keep one owner for the perception loop and one active turn. Journal raw
+perceptions and the grouped input in one short transaction before inference.
+Keep model work outside SQLite transactions. On orderly shutdown join the
+active turn and journal accepted pending input. On restart close unfinished
+journaled inputs without repeating the model call. Trace failures must not
+affect domain work. Keep provider dependencies in adapters and credentials
+outside domain events.

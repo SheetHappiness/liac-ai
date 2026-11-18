@@ -1,7 +1,7 @@
 """Frozen journal envelopes and ephemeral output; no provider or storage imports."""
 
 import json
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any, Literal, Mapping
 from uuid import uuid4
@@ -62,54 +62,14 @@ class Event:
                    occurred_at or utc_now(), canonical_json(payload), turn_id, causation_id)
 
 
-@dataclass(frozen=True)
-class UserMessage:
-    text: str
-    character_id: CharacterId = "primary"
-    event_id: EventId = field(default_factory=lambda: new_id("evt"))
-    turn_id: TurnId = field(default_factory=lambda: new_id("turn"))
-    occurred_at: str = field(default_factory=utc_now)
-
-    def __post_init__(self) -> None:
-        if not isinstance(self.text, str) or not self.text.strip():
-            raise ValueError("Message text must be nonempty")
-        if not isinstance(self.turn_id, str) or not self.turn_id.strip():
-            raise ValueError("Turn ID must be nonempty")
-
-    def as_event(self) -> Event:
-        return Event.create(self.character_id, "user.message.completed", {"text": self.text},
-                            source="user", event_id=self.event_id, turn_id=self.turn_id,
-                            occurred_at=self.occurred_at)
-
-
-@dataclass(frozen=True)
-class CharacterInitiative:
-    intent: str
-    reason: str
-    character_id: CharacterId
-    event_id: EventId
-    turn_id: TurnId
-    occurred_at: str
-    proposal_id: str
-
-    def as_event(self) -> Event:
-        return Event.create(self.character_id, 'character.initiative.started',
-            dict(intent=self.intent, reason=self.reason, proposal_id=self.proposal_id),
-            event_id=self.event_id, turn_id=self.turn_id, occurred_at=self.occurred_at)
-
-
-type FastInput = UserMessage | CharacterInitiative
-
-
 type OutputKind = Literal["reply.started", "reply.delta", "reply.completed",
-                          "reply.cancelled", "reply.failed", "deep.completed", "deep.failed"]
+                          "reply.cancelled", "reply.failed"]
 
 
 @dataclass(frozen=True)
 class RuntimeOutput:
     kind: OutputKind
     character_id: CharacterId
-    revision: int
     turn_id: TurnId | None = None
     text: str = ""
     delta_index: int = 0

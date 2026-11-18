@@ -1,5 +1,8 @@
 # M6.1 ProjectBEA perception rewrite
 
+This report records the original M6.1 prototype. The
+[Single Mind cutover](#single-mind-cutover) made it the default runtime.
+
 Base: `codex/m6-0-single-mind` at `8f726498d7efe86f1e25e85f15543f442e08d9ea`.
 Reference: [ProjectBEA at f2186fc](https://github.com/emqnuele/projectBEA/tree/f2186fc647db3f9ae65e6463b9f82c882bdca68b/src/core).
 
@@ -50,7 +53,7 @@ Reference: [ProjectBEA at f2186fc](https://github.com/emqnuele/projectBEA/tree/f
   before exit. On restart, already-journaled unfinished inputs are cancelled
   without rerunning actions. Abrupt process death can lose the ephemeral queue
   ahead of the Journal. Use one process per conversation database.
-- The legacy CLI and desktop continue submitting ordinary individual messages.
+- At the original M6.1 revision the legacy CLI and desktop still submitted ordinary individual messages.
   Existing M5 callers that use the shared `PerceptionBus` pick up the new defaults
   and backlog semantics. Explicit timing arguments still work.
 
@@ -136,4 +139,23 @@ sensors and automatic steering or voice restart remain future work.
 | `src/vtuber/runtime/single_mind.py`, `src/vtuber/m6.py` | Serial turn ownership, stdin lifecycle and trace option. |
 | `src/vtuber/runtime/journal.py`, `src/vtuber/minds/m6_context.py`, `src/vtuber/minds/fake.py` | Group membership, frame projection and fake reply text. |
 | `tests/test_perception_bus.py`, `tests/test_single_mind.py`, `tests/test_m6_cli.py` | Bus, integrated Runtime and console checks. |
-| `README.md`, `docs/PROJECT_BLUEPRINT.md`, this report | Usage, architecture and acceptance evidence. |
+| `README.md`, the [transitional blueprint](../archive/README.md), this report | Usage, architecture and acceptance evidence at the original milestone. |
+
+## Single Mind cutover
+
+The default console now runs M6.1 through `python -m vtuber` and the installed
+`vtuber` command. `python -m vtuber.m6` remains an alias. The M5 implementation
+and reports are available through the [archive index](../archive/README.md).
+
+The Journal writes the grouped M6.1 event format directly. Existing SQLite
+events and legacy tables remain readable on disk. New databases contain only
+the event table and its indexes. A smoke check on a backup of a pre-cutover M6.1
+database preserved 11 existing event rows and both legacy tables, then appended
+four events through the current console.
+
+The active suite passed all 57 Python tests on 3.12.14 and 3.14.7 and all seven
+bridge tests on Node. An editable install passed `pip check` and launched the
+fake backend with the installed command. The authenticated CLI smoke sent five
+synthetic inputs in two batches of three and two. The second batch arrived
+during the first Luna request. Luna completed two serial calls with `speak`
+followed by `stay_silent`. The Journal had zero unfinished turns.
