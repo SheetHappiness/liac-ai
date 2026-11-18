@@ -50,7 +50,7 @@ class AttentionTests(unittest.TestCase):
         self.assertEqual([m['role'] for m in messages], ['system', 'user', 'user'])
         self.assertIn('not a user request', messages[-2]['content'])
         self.assertLess(len(messages[-2]['content']), 600)
-        self.assertEqual(messages[-2]['timestamp'], 1763380800000)
+        self.assertEqual(messages[-2]['timestamp'], 1794916800000)
         self.assertEqual(messages[-1]['content'], 'What is on my screen?')
 
 
