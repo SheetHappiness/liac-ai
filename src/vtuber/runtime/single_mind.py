@@ -6,9 +6,10 @@ from typing import Literal
 
 from vtuber.contracts.events import Event, RuntimeOutput, UserMessage
 from vtuber.contracts.mind import MindDecision, SingleMindPort
-from vtuber.contracts.perception import PerceptionBatch
+from vtuber.contracts.perception import Perception, PerceptionBatch
 from vtuber.contracts.protocols import OutputSink
 from vtuber.minds.m6_context import build_m6_messages
+from vtuber.runtime.attention import LiveState, should_wake
 from vtuber.runtime.journal import Journal
 
 
@@ -24,6 +25,7 @@ class SingleMindRuntime:
         self.output = output
         self.identity = identity
         self._input_lock = asyncio.Lock()
+        self._live_state = LiveState()
         self._active: tuple[UserMessage, int, asyncio.Task[None]] | None = None
         self._started = False
         self._closed = False
@@ -44,8 +46,13 @@ class SingleMindRuntime:
         async with self._input_lock:
             if not self._started or self._closed:
                 raise RuntimeError('Single Mind is not accepting perceptions')
+            fresh_state = tuple(item for item in batch.items
+                                if item.delivery == 'ambient'
+                                and item.kind in ('state', 'observation')
+                                and self.journal.get(item.perception_id) is None)
             message = self.journal.accept_local_perceptions(self.character_id, batch)
-            if message is None:
+            self._live_state.observe(fresh_state)
+            if not should_wake(batch) or message is None:
                 return None
             revision = self.journal.snapshot(self.character_id).revision
             try:
@@ -54,10 +61,11 @@ class SingleMindRuntime:
                 self._finish(message, revision, 'reply.cancelled', {'reason': 'submission_cancelled'})
                 raise
             dialogue = self.journal.recent_dialogue(self.character_id, limit=40)
+            observations = self._live_state.snapshot(batch.conversation_key)
             self.journal.append(Event.create(self.character_id, 'character.reply.started',
                 {'snapshot_revision': revision}, event_id=f'reply_started_{message.event_id}',
                 turn_id=message.turn_id, causation_id=message.event_id))
-            task = asyncio.create_task(self._run(message, revision, dialogue), name='single-mind-turn')
+            task = asyncio.create_task(self._run(message, revision, dialogue, observations), name='single-mind-turn')
             self._active = message, revision, task
             return task
 
@@ -80,7 +88,8 @@ class SingleMindRuntime:
             self._emit(RuntimeOutput(kind, self.character_id, revision, message.turn_id,
                                      payload['text'] if kind == 'reply.completed' else payload['reason']))
 
-    async def _run(self, message: UserMessage, revision: int, dialogue: tuple[Event, ...]) -> None:
+    async def _run(self, message: UserMessage, revision: int, dialogue: tuple[Event, ...],
+                   observations: tuple[Perception, ...]) -> None:
         task = asyncio.current_task()
         assert task is not None
         index = 0
@@ -97,7 +106,8 @@ class SingleMindRuntime:
 
         self._emit(RuntimeOutput('reply.started', self.character_id, revision, message.turn_id))
         try:
-            decision = await self.mind.generate(build_m6_messages(self.identity, dialogue), on_speak_delta=preview)
+            decision = await self.mind.generate(
+                build_m6_messages(self.identity, dialogue, observations), on_speak_delta=preview)
             if not is_current() or task.cancelling():
                 raise asyncio.CancelledError
             if not isinstance(decision, MindDecision) or not decision.tool_call_id.strip():
