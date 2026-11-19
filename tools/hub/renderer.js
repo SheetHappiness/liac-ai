@@ -42,6 +42,7 @@ let switching = false;
 let renderPending = false;
 let voiceAvailable = false;
 let audioContext, audioReady;
+let preview;
 const voice = new VoicePlayback({
     now: () => performance.now(),
     async synthesize(text) {
@@ -371,11 +372,62 @@ ui.resume.onclick = async () => {
 ui.filter.onchange = schedule;
 ui['clear-selection'].onclick = () => select(null);
 
+function updateVoiceSliders() {
+    const pitch = ui['voice-pitch'].valueAsNumber;
+    ui['voice-pitch-value'].value = `${pitch > 0 ? '+' : ''}${pitch}%`;
+    ui['voice-rate-value'].value = `${ui['voice-rate'].valueAsNumber.toFixed(2)}×`;
+}
+
+function voiceDraft() {
+    return {
+        key: ui['voice-key'].value.trim(),
+        region: ui['voice-region'].value.trim(),
+        voice: ui['voice-name'].value.trim(),
+        pitch: ui['voice-pitch'].valueAsNumber,
+        rate: ui['voice-rate'].valueAsNumber,
+    };
+}
+
+function voiceError(message) {
+    ui['voice-error'].textContent = message;
+    ui['voice-error'].hidden = false;
+}
+
+async function openVoiceSettings() {
+    if (ui['voice-settings'].disabled || ui['voice-setup'].open) return;
+    ui['voice-settings'].disabled = true;
+    try {
+        const settings = await window.liac.voiceSettings();
+        ui['voice-name'].value = settings.voice;
+        ui['voice-region'].value = settings.region;
+        ui['voice-pitch'].value = settings.pitch;
+        ui['voice-rate'].value = settings.rate;
+        ui['voice-key'].required = !settings.hasKey;
+        ui['voice-key'].placeholder = settings.hasKey ? 'Leave blank to keep the saved key' : '';
+        ui['voice-error'].hidden = true;
+        updateVoiceSliders();
+        ui['voice-setup'].showModal();
+    } catch {
+        ui['voice-status'].textContent = 'Could not open voice settings';
+    } finally {
+        ui['voice-settings'].disabled = false;
+    }
+}
+
+function stopVoicePreview() {
+    if (!preview) return;
+    if (preview.source) preview.source.stop();
+    else window.liac.cancelVoice().catch(() => {});
+    preview = undefined;
+    ui['voice-preview'].disabled = false;
+}
+
+ui['voice-settings'].onclick = openVoiceSettings;
+ui['voice-pitch'].oninput = ui['voice-rate'].oninput = updateVoiceSliders;
 ui['voice-toggle'].onchange = () => {
     if (ui['voice-toggle'].checked && !voiceAvailable) {
         ui['voice-toggle'].checked = false;
-        ui['voice-error'].hidden = true;
-        ui['voice-setup'].showModal();
+        void openVoiceSettings();
         return;
     }
     if (!ui['voice-toggle'].checked) {
@@ -385,25 +437,60 @@ ui['voice-toggle'].onchange = () => {
     updateVoiceStatus();
 };
 ui['voice-cancel'].onclick = () => ui['voice-setup'].close();
-ui['voice-setup'].onclose = () => { ui['voice-key'].value = ''; };
+ui['voice-setup'].oncancel = event => {
+    if (ui['voice-save'].disabled) event.preventDefault();
+};
+ui['voice-setup'].onclose = () => {
+    ui['voice-key'].value = '';
+    stopVoicePreview();
+};
+ui['voice-preview'].onclick = async () => {
+    if (!ui['voice-form'].reportValidity()) return;
+    stopVoicePreview();
+    voice.clear();
+    ui['voice-error'].hidden = true;
+    ui['voice-preview'].disabled = true;
+    const request = preview = {};
+    try {
+        audioContext ??= new AudioContext();
+        const [, wav] = await Promise.all([audioContext.resume(), window.liac.previewVoice(voiceDraft())]);
+        if (!wav) throw new Error('No preview audio');
+        const audio = await audioContext.decodeAudioData(wav);
+        if (preview !== request || !ui['voice-setup'].open) return;
+        const source = request.source = audioContext.createBufferSource();
+        source.buffer = audio;
+        source.connect(audioContext.destination);
+        source.onended = () => {
+            source.disconnect();
+            if (preview === request) {
+                preview = undefined;
+                ui['voice-preview'].disabled = false;
+            }
+        };
+        source.start();
+    } catch {
+        if (preview !== request) return;
+        stopVoicePreview();
+        voiceError('Preview unavailable. Check the Azure key, region, and voice.');
+    }
+};
 ui['voice-form'].onsubmit = async event => {
     event.preventDefault();
-    ui['voice-save'].disabled = true;
+    if (ui['voice-save'].disabled) return;
+    stopVoicePreview();
+    ui['voice-save'].disabled = ui['voice-cancel'].disabled = ui['voice-preview'].disabled = true;
     ui['voice-error'].hidden = true;
     try {
-        const key = ui['voice-key'].value.trim();
-        ui['voice-key'].value = '';
-        await window.liac.configureVoice(key, ui['voice-region'].value.trim());
+        await window.liac.configureVoice(voiceDraft());
+        voice.clear();
+        if (!voiceAvailable) ui['voice-toggle'].checked = true;
         voiceAvailable = true;
-        ui['voice-toggle'].checked = true;
         ui['voice-setup'].close();
         updateVoiceStatus();
     } catch {
-        ui['voice-error'].textContent = 'Enter a Speech key and region from your Azure resource.';
-        ui['voice-error'].hidden = false;
-        ui['voice-key'].focus();
+        voiceError('Could not save voice settings. Check the fields and local file access.');
     } finally {
-        ui['voice-save'].disabled = false;
+        ui['voice-save'].disabled = ui['voice-cancel'].disabled = ui['voice-preview'].disabled = false;
     }
 };
 

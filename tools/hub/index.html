@@ -58,6 +58,7 @@
         <h2 id="chat-title">Chat</h2>
         <div class="voice-controls">
           <label><input type="checkbox" id="voice-toggle" aria-describedby="voice-status" disabled> Voice</label>
+          <button type="button" id="voice-settings" aria-haspopup="dialog">Voice settings</button>
           <span id="voice-status" class="channel" role="status">STT simulation</span>
         </div>
       </header>
@@ -77,14 +78,31 @@
   </main>
   <dialog id="voice-setup" aria-labelledby="voice-title">
     <form id="voice-form" autocomplete="off">
-      <h2 id="voice-title">Set up Azure Speech</h2>
-      <p>Use the key and region from your Azure Speech resource. Hub keeps them for this session.</p>
-      <label>Speech key <input id="voice-key" type="password" maxlength="256" required autofocus></label>
-      <label>Region <input id="voice-region" value="eastus" maxlength="32" required></label>
+      <h2 id="voice-title">Voice settings</h2>
+      <label>Azure voice <input id="voice-name" list="azure-voices" maxlength="100" required autofocus></label>
+      <datalist id="azure-voices">
+        <option value="en-US-AshleyNeural">Ashley · English (US)</option>
+        <option value="en-US-AriaNeural">Aria · English (US)</option>
+        <option value="en-US-JennyNeural">Jenny · English (US)</option>
+        <option value="en-US-AvaMultilingualNeural">Ava · Multilingual</option>
+        <option value="en-US-GuyNeural">Guy · English (US)</option>
+        <option value="en-GB-SoniaNeural">Sonia · English (UK)</option>
+        <option value="uk-UA-PolinaNeural">Polina · Ukrainian</option>
+      </datalist>
+      <label>Pitch <output id="voice-pitch-value"></output>
+        <input id="voice-pitch" type="range" min="-50" max="50" step="1">
+      </label>
+      <label>Rate <output id="voice-rate-value"></output>
+        <input id="voice-rate" type="range" min="0.5" max="2" step="0.05">
+      </label>
+      <label>Azure region <input id="voice-region" maxlength="32" required></label>
+      <label>Azure Speech key <input id="voice-key" type="password" maxlength="256" aria-describedby="voice-key-note"></label>
+      <p id="voice-key-note">The key is saved on this computer so you can reuse it.</p>
       <p id="voice-error" role="alert" hidden></p>
-      <div>
+      <div class="voice-actions">
+        <button type="button" id="voice-preview">Preview</button>
         <button type="button" id="voice-cancel">Cancel</button>
-        <button type="submit" id="voice-save">Enable voice</button>
+        <button type="submit" id="voice-save">Save</button>
       </div>
     </form>
   </dialog>

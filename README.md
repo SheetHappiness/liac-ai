@@ -34,11 +34,14 @@ override executable paths. Hub also checks `.data/hub/bin` for a local Bun.
 
 ### Azure speech in Hub
 
-Turn on **Voice** in Chat and enter your Azure Speech key for the current
-Hub session. The region defaults to `eastus` and must match your Azure resource.
-Set `SPEECH_KEY` before launch to start with speech enabled. Use
-`SPEECH_REGION` to override the region and `LIAC_TTS_VOICE` to override the
-default voice, `en-US-AshleyNeural`. Speech uses pitch `+30%` and rate `1.0`.
+Open **Voice settings** in Chat and enter your Azure Speech key once. The
+region defaults to `eastus` and must match your Azure resource. Choose a
+suggested voice or type an Azure voice ID, adjust pitch and rate, and use
+**Preview** to hear the draft. **Save** applies the settings to future replies
+and stores them with the key in the local, Git-ignored `.data/hub/.env` file.
+The defaults are `en-US-AshleyNeural`, pitch `+30%`, and rate `1.0`.
+Hub uses `SPEECH_KEY`, `SPEECH_REGION`, and `LIAC_TTS_VOICE` from the process
+environment when the corresponding local values are missing.
 Hub sends sentence text to Azure and plays the returned audio locally. The
 first sentence can play while Luna is still generating the reply. Submitting
 another transcript interrupts the current audio. Replay displays recorded text.

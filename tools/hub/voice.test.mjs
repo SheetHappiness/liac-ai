@@ -1,7 +1,35 @@
 import assert from 'node:assert/strict';
+import { mkdtempSync, rmdirSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { test } from 'node:test';
 
 import { VoicePlayback, playAudio } from './voice.mjs';
+import { loadSpeech, saveSpeech, speechSsml, updateSpeech } from './speech-settings.cjs';
+
+test('Azure preferences and key survive restart and drive escaped SSML', t => {
+    const directory = mkdtempSync(join(tmpdir(), 'liac-speech-'));
+    const file = join(directory, '.env');
+    t.after(() => {
+        rmSync(file, { force: true });
+        rmdirSync(directory);
+    });
+    const initial = loadSpeech(file, {});
+    assert.deepEqual(initial, { key: '', region: 'eastus', voice: 'en-US-AshleyNeural', pitch: 30, rate: 1 });
+    const settings = updateSpeech(initial, {
+        key: 'test-key', region: 'EastUS', voice: 'uk-UA-PolinaNeural', pitch: -15, rate: 1.25,
+    });
+    saveSpeech(file, settings);
+    const restored = loadSpeech(file, { SPEECH_KEY: 'ignored-env-key' });
+    assert.deepEqual(restored, settings);
+    const changed = updateSpeech(restored, { ...restored, key: '', pitch: 20 });
+    saveSpeech(file, changed);
+    assert.deepEqual(loadSpeech(file, {}), { ...restored, pitch: 20 });
+    assert.throws(() => updateSpeech(restored, { ...restored, voice: '"><break/>' }));
+    assert.throws(() => updateSpeech(restored, { ...restored, key: 'abc\nSPEECH_KEY=bad' }));
+    assert.match(speechSsml('A & B <break/>', changed),
+        /xml:lang="uk-UA"><voice name="uk-UA-PolinaNeural"><prosody pitch="\+20%" rate="1.25">A &amp; B &lt;break\/&gt;/);
+});
 
 const tick = () => new Promise(resolve => setImmediate(resolve));
 

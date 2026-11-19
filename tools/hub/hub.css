@@ -113,7 +113,11 @@ pre {
     width: 100%; padding: 8px 12px; font: inherit; color: inherit; background: var(--fill);
     border: 1px solid var(--line); border-radius: 11px;
 }
-#voice-form div { display: flex; justify-content: flex-end; gap: 8px; }
+#voice-form label:has(output) { grid-template-columns: 1fr auto; }
+#voice-form output { font-variant-numeric: tabular-nums; color: var(--muted); }
+#voice-form input[type=range] { grid-column: 1 / -1; padding: 0; margin: 0; accent-color: var(--accent); }
+.voice-actions { display: flex; justify-content: flex-end; flex-wrap: wrap; gap: 8px; }
+#voice-preview { margin-right: auto; }
 #voice-form #voice-error { color: var(--error); }
 #voice-save { background: var(--accent); color: var(--on-accent); }
 .channel { background: var(--fill); border-radius: 100px; padding: 5px 9px; text-align: center; }
