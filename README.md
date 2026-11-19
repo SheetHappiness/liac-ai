@@ -2,9 +2,37 @@
 
 Liac is a local, text-only runtime inspired by ProjectBEA. A perception bus
 groups incoming events. The runtime records each batch in SQLite and runs one
-serialized turn for each batch with fresh direct chat. GPT-6 Luna chooses
+serialized turn for each batch with fresh direct input. GPT-6 Luna chooses
 `speak` or `stay_silent`. Streaming speech is provisional until the decision
 is committed.
+
+## Liac Hub
+
+The Electron app starts the real GPT-6 Luna runtime at low reasoning. The
+right-hand chat treats typed messages as final STT transcripts and displays
+committed speech as simulated TTS output. The simulator settles a batch after
+1.2 seconds without another submitted transcript, with no time ceiling for
+the burst. On the left, Live shows perception,
+batching, admission, model timing and actions. Select an event or chat message
+to inspect its turn. Replay opens earlier runs while the current runtime stays
+available in Live.
+
+With Node.js 22.12+, Python 3.12+ and Bun 1.4.4+, run once from the checkout:
+
+```powershell
+npm ci --prefix tools/hub
+npm ci --ignore-scripts --prefix tools/luna-bridge
+bun --no-env-file tools/luna-bridge/probe.mjs --login
+```
+
+Open [Start-Hub.cmd](Start-Hub.cmd) on Windows or run `npm start --prefix tools/hub`.
+Hub uses the checkout's `.venv` when present. Set `LIAC_PYTHON` and `LIAC_BUN` to
+override executable paths. Hub also checks `.data/hub/bin` for a local Bun.
+
+Each Hub run stores chat and diagnostic events under `.data/hub/runs/`.
+**Record model context** is off on startup. Enabling it saves the exact
+system and messages sent to the Bun bridge for subsequent requests in that
+run. Treat the run folders as private conversation data.
 
 ## Run locally
 

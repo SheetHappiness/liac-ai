@@ -38,6 +38,7 @@ async function run() {
     const { AuthStorage, streamSimple } = await import("@oh-my-pi/pi-ai");
     const { getBundledModel } = await import("@oh-my-pi/pi-catalog");
     const model = getBundledModel(provider, modelId);
+    if (!model || model.id !== modelId || model.provider !== provider) throw new Error("Luna model unavailable");
     const db = new URL("codex.sqlite", authDir);
     const auth = await stat(db).then(() => AuthStorage.create(fileURLToPath(db)), () => null);
     let active;
@@ -49,6 +50,19 @@ async function run() {
                 if (Buffer.byteLength(line) >= 65_536) break;
                 const frame = JSON.parse(line);
                 if (frame.type === "shutdown") break;
+                if (frame.type === "check" && typeof frame.id === "string" && !active) {
+                    const signal = AbortSignal.timeout(8_000);
+                    try {
+                        if (!await auth?.oauth.access(provider, undefined, { signal })) {
+                            throw new Error("OAuth unavailable");
+                        }
+                        signal.throwIfAborted();
+                        send(frame.id, "ready", {});
+                    } catch {
+                        send(frame.id, "error", { kind: "oauth_unavailable" });
+                    }
+                    continue;
+                }
                 if (frame.type === "cancel" && frame.id === active?.id) active.controller.abort();
                 if (frame.type !== "turn") continue;
                 if (active) {

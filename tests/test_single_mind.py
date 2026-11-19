@@ -111,7 +111,8 @@ class SingleMindRuntimeTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(mind.calls), 1)
         self.assertEqual([kind for kind, _, _ in self.traces],
                          ['perception.enqueued', 'batch.opened', 'perception.enqueued', 'perception.enqueued',
-                          'batch.closed', 'turn.started', 'model.started', 'model.completed', 'turn.completed'])
+                          'batch.closed', 'admission.decided', 'turn.started', 'model.started',
+                          'model.completed', 'turn.completed'])
         correlated = [batch_id for kind, batch_id, _ in self.traces if kind != 'perception.enqueued']
         self.assertEqual(set(correlated), {user.payload['batch_id']})
         self.assertNotIn('How are you?', json.dumps(self.traces))
@@ -209,6 +210,9 @@ class SingleMindRuntimeTests(unittest.IsolatedAsyncioTestCase):
         await runtime.publish(perception('direct'))
         await self.finish(runtime)
         self.assertEqual([e.event_id for e in self.events('perception.received')], ['ambient', 'nearby', 'direct'])
+        self.assertEqual([(data['admitted'], data['reason']) for kind, _, data in self.traces
+                          if kind == 'admission.decided'],
+                         [(False, 'no_fresh_direct_input'), (True, 'fresh_direct_input')])
         self.assertEqual(len(mind.calls), 1)
         self.assertEqual([item['perception_id'] for item in frame(mind.calls[0][-1])], ['nearby', 'direct'])
         self.assertEqual(self.events('character.reply.completed')[0].payload['text'], '')

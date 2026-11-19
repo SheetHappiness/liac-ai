@@ -18,10 +18,12 @@ class LunaStreamError(RuntimeError):
 
 
 class LunaStream:
-    def __init__(self, command: tuple[str, ...], *, system: str = "", reasoning: str = "low") -> None:
+    def __init__(self, command: tuple[str, ...], *, system: str = "", reasoning: str = "low",
+                 on_bridge_input: Callable[[dict], None] | None = None) -> None:
         self._command = command
         self._system = system
         self._reasoning = reasoning
+        self._on_bridge_input = on_bridge_input
         self._lock = asyncio.Lock()
         self._process: asyncio.subprocess.Process | None = None
         self._closed = False
@@ -62,6 +64,22 @@ class LunaStream:
             raise LunaStreamError("invalid_frame" if line else "bridge_closed")
         return frame
 
+    async def check_ready(self) -> None:
+        async with self._lock:
+            if self._closed:
+                raise LunaStreamError("bridge_closed")
+            identifier = uuid4().hex
+            try:
+                async with asyncio.timeout(12):
+                    process = await self._start()
+                    await self._send(process, {"type": "check", "id": identifier})
+                    frame = await self._read(process, identifier)
+                    if frame.get("type") != "ready":
+                        raise LunaStreamError("oauth_unavailable" if frame.get("kind") == "oauth_unavailable"
+                                              else "bridge_error")
+            except (OSError, TimeoutError):
+                raise LunaStreamError("bridge_io_failed") from None
+
     async def generate(
         self,
         messages: tuple[dict[str, object], ...],
@@ -79,10 +97,16 @@ class LunaStream:
             process = await self._start()
             identifier = uuid4().hex
             try:
-                await self._send(process, {
+                request = {
                     "type": "turn", "id": identifier, "messages": messages,
                     "system": system, "reasoning": self._reasoning,
-                })
+                }
+                await self._send(process, request)
+                if self._on_bridge_input is not None:
+                    try:
+                        self._on_bridge_input(request)
+                    except Exception:
+                        pass
                 async with asyncio.timeout(45):
                     while True:
                         frame = await self._read(process, identifier)

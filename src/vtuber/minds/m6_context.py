@@ -11,8 +11,12 @@ PERCEPTION_FRAME = '[PERCEPTIONS]\n'
 
 
 OPERATING_PROMPT = (
-    'Choose exactly one tool for the latest user turn. '
-    'Use speak with a short message when you want to reply, or stay_silent when you choose silence.'
+    'Choose exactly one tool: speak or stay_silent. '
+    'When the user appears to be mid-thought, use stay_silent and let them continue. '
+    'If the latest input continues an earlier fragment, interpret them together. '
+    'Use speak for a short reply when a response fits the conversation, '
+    'especially after a complete question or request. '
+    'You may choose stay_silent on consecutive turns.'
 )
 
 

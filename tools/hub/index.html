@@ -1,0 +1,75 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self'">
+  <title>Liac Hub</title>
+  <link rel="stylesheet" href="hub.css">
+  <script defer src="renderer.js"></script>
+</head>
+<body>
+  <header class="top">
+    <div class="brand">
+      <div class="brand-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M2 12h4l3-6 5 12 3-6h5"/></svg></div>
+      <h1>Liac Hub</h1>
+    </div>
+    <div class="top-status">
+      <span class="model-label">GPT-6 Luna <span>·</span> Low</span>
+      <span id="status" class="status" role="status"><i></i><span>Starting</span></span>
+      <button id="retry" hidden>Retry</button>
+    </div>
+  </header>
+  <main id="workspace">
+    <section class="panel inspector" aria-labelledby="inspector-title">
+      <header class="panel-heading">
+        <h2 id="inspector-title">Runtime inspector</h2>
+        <nav aria-label="Inspector view" class="segmented">
+          <button id="live-tab" aria-pressed="true">Live</button>
+          <button id="replay-tab" aria-pressed="false">Replay</button>
+        </nav>
+      </header>
+      <div class="toolbar">
+        <select id="runs" aria-label="Recorded run" hidden></select>
+        <label id="capture-setting"><input type="checkbox" id="capture" disabled> Record model context</label>
+        <span id="count"></span>
+      </div>
+      <div class="trace-heading">
+        <h3>Timeline</h3>
+        <select id="filter" aria-label="Filter trace events">
+          <option value="">All events</option>
+          <option value="perception|batch|admission">Perception &amp; admission</option>
+          <option value="turn|model|reply">Model &amp; actions</option>
+        </select>
+      </div>
+      <div id="timeline" class="timeline" aria-label="Trace timeline"></div>
+      <section class="details" aria-labelledby="detail-title">
+        <div class="detail-heading"><h3 id="detail-title">Event details</h3>
+          <button id="clear-selection" hidden>Clear selection</button>
+        </div>
+        <div id="detail-body" class="detail-body"></div>
+      </section>
+    </section>
+    <div id="divider" role="separator" tabindex="0" aria-label="Resize inspector and chat"
+        aria-orientation="vertical" aria-valuemin="40" aria-valuemax="72" aria-valuenow="62"></div>
+    <section class="panel chat" aria-labelledby="chat-title">
+      <header class="panel-heading">
+        <h2 id="chat-title">Chat</h2>
+        <span class="channel">STT / TTS simulation</span>
+      </header>
+      <div id="messages" class="messages" aria-label="Conversation"></div>
+      <div class="compose">
+        <p id="notice" role="status">Checking the Luna bridge and sign-in.</p>
+        <form id="composer">
+          <textarea id="transcript" rows="2" maxlength="8000" disabled
+              placeholder="Type an STT transcript…" aria-label="STT transcript"></textarea>
+          <button id="submit" type="submit" title="Send transcript" aria-label="Send transcript" disabled>
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 19V5m-6 6 6-6 6 6"/></svg>
+          </button>
+        </form>
+        <span class="keyboard">Enter to send <span>·</span> Shift+Enter for a new line</span>
+      </div>
+    </section>
+  </main>
+</body>
+</html>

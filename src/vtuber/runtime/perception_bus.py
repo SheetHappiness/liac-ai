@@ -15,9 +15,10 @@ class PerceptionQueueFull(RuntimeError):
 
 class PerceptionBus:
     def __init__(self, *, live_gap: float = .30, text_gap: float = 1.20,
-                 max_window: float = 3.0, max_pending: int = 256,
+                 max_window: float | None = 3.0, max_pending: int = 256,
                  trace: TraceSink | None = None) -> None:
-        for value in (live_gap, text_gap, max_window):
+        timings = (live_gap, text_gap) if max_window is None else (live_gap, text_gap, max_window)
+        for value in timings:
             if type(value) not in (int, float) or not math.isfinite(value) or value < 0:
                 raise ValueError('Perception timing must be finite and nonnegative')
         if type(max_pending) is not int or max_pending < 1:
@@ -119,7 +120,7 @@ class PerceptionBus:
 
     async def _settle(self, *, steering: bool = False) -> PerceptionBatch:
         loop = asyncio.get_running_loop()
-        ceiling = loop.time() + self.max_window
+        ceiling = math.inf if self.max_window is None else loop.time() + self.max_window
         entries = self._available()
         cursor = len(self._pending)
         batch_id = self._open(entries)

@@ -72,11 +72,26 @@ class M6ContextTests(unittest.TestCase):
         self.assertFalse(result['isError'])
         self.assertEqual(build_m6_messages('You are Liac.', (event,))[1:], (call, result))
 
-    def test_stay_silent_replay(self):
-        _, call, result = build_m6_messages('Identity', (reply('', action='stay_silent', tool_call_id='quiet'),))
-        self.assertEqual(call['content'], [{'type': 'toolCall', 'name': 'stay_silent',
-                                           'id': 'quiet', 'arguments': {}}])
-        self.assertEqual((result['toolCallId'], result['toolName']), ('quiet', 'stay_silent'))
+    def test_consecutive_silences_preserve_user_fragments(self):
+        dialogue = (
+            user('I wanted to ask...'),
+            reply('', action='stay_silent', tool_call_id='quiet-1'),
+            user('...about Warsaw, specifically...'),
+            reply('', action='stay_silent', tool_call_id='quiet-2'),
+            user('...how do I get from Chopin Airport to the city centre?'),
+        )
+        _, first, call1, result1, second, call2, result2, latest = build_m6_messages('Identity', dialogue)
+        self.assertEqual([(message['role'], message['content']) for message in (first, second, latest)], [
+            ('user', 'I wanted to ask...'),
+            ('user', '...about Warsaw, specifically...'),
+            ('user', '...how do I get from Chopin Airport to the city centre?'),
+        ])
+        for call, result, call_id in ((call1, result1, 'quiet-1'), (call2, result2, 'quiet-2')):
+            self.assertEqual(call['role'], 'assistant')
+            self.assertEqual(call['content'], [{'type': 'toolCall', 'name': 'stay_silent',
+                                               'id': call_id, 'arguments': {}}])
+            self.assertEqual((result['role'], result['toolCallId'], result['toolName']),
+                             ('toolResult', call_id, 'stay_silent'))
 
     def test_legacy_reply_remains_plain_text(self):
         ended = ('character.reply.cancelled', 'character.reply.failed')

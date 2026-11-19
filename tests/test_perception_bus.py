@@ -43,6 +43,22 @@ class PerceptionBusTests(unittest.IsolatedAsyncioTestCase):
             producer.cancel()
             await asyncio.gather(producer, return_exceptions=True)
 
+    async def test_voice_without_ceiling_waits_for_quiet_throughout_burst(self):
+        bus = PerceptionBus(live_gap=.14, max_window=None)
+        await bus.publish(perception('0', kind='voice'))
+        drain = asyncio.create_task(bus.drain())
+        try:
+            for index in range(1, 6):
+                await asyncio.sleep(.04)
+                self.assertFalse(drain.done())
+                await bus.publish(perception(str(index), kind='voice'))
+            batch = await asyncio.wait_for(drain, .5)
+            self.assertEqual([item.perception_id for item in batch.items], [str(i) for i in range(6)])
+            self.assertEqual(batch.closed_by, 'quiet')
+        finally:
+            drain.cancel()
+            await asyncio.gather(drain, return_exceptions=True)
+
     async def test_keys_never_mix(self):
         bus = PerceptionBus(text_gap=.02)
         for item in [perception('a'), perception('b', conversation_key='other'), perception('c')]:
@@ -193,9 +209,12 @@ class PerceptionBusTests(unittest.IsolatedAsyncioTestCase):
 
     def test_invalid_configuration(self):
         for field in ('live_gap', 'text_gap', 'max_window'):
-            for value in (-1, float('nan'), float('inf'), None, '1', True):
+            for value in (-1, float('nan'), float('inf'), '1', True):
                 with self.subTest(field=field, value=value), self.assertRaises(ValueError):
                     PerceptionBus(**{field: value})
+        for field in ('live_gap', 'text_gap'):
+            with self.subTest(field=field), self.assertRaises(ValueError):
+                PerceptionBus(**{field: None})
         for value in (0, -1, 1.5, None, True):
             with self.subTest(value=value), self.assertRaises(ValueError):
                 PerceptionBus(max_pending=value)

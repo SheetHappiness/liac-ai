@@ -17,7 +17,12 @@ class EventConflict(ValueError):
 
 
 class Journal:
-    def __init__(self, path: str | Path) -> None:
+    def __init__(self, path: str | Path, *, read_only: bool = False) -> None:
+        if read_only:
+            self._db = sqlite3.connect(Path(path).resolve().as_uri() + '?mode=ro',
+                                       uri=True, isolation_level=None)
+            self._db.row_factory = sqlite3.Row
+            return
         if str(path) != ":memory:":
             Path(path).parent.mkdir(parents=True, exist_ok=True)
         self._db = sqlite3.connect(path, isolation_level=None)
@@ -95,9 +100,9 @@ class Journal:
 
     @staticmethod
     def _check_direct_route(item: Perception) -> None:
-        if (item.delivery == 'direct' and
-                (item.kind, item.source, item.conversation_key) != ('chat', 'local', 'local')):
-            raise ValueError('Direct perception requires the local chat route')
+        if item.delivery == 'direct' and (item.kind, item.source, item.conversation_key) not in (
+                ('chat', 'local', 'local'), ('voice', 'electron', 'local')):
+            raise ValueError('Direct perception requires a supported local route')
 
     def is_new_perception(self, character_id: str, item: Perception) -> bool:
         self._check_direct_route(item)

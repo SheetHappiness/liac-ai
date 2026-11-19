@@ -58,6 +58,9 @@ class SingleMindRuntime:
         try:
             while (batch := await self.bus.drain()) is not None:
                 message = self.journal.accept_local_perceptions(self.character_id, batch)
+                emit_trace(self.trace, 'admission.decided', batch.batch_id, batch_id=batch.batch_id,
+                           turn_id=message.turn_id if message else None, admitted=message is not None,
+                           reason='fresh_direct_input' if message else 'no_fresh_direct_input')
                 if message is not None:
                     await self._run_turn(message, batch)
         except asyncio.CancelledError:
@@ -159,6 +162,8 @@ class SingleMindRuntime:
         await self.bus.close()
         while (batch := self.bus.drain_nowait()) is not None:
             message = self.journal.accept_local_perceptions(self.character_id, batch)
+            emit_trace(self.trace, 'admission.decided', batch.batch_id, batch_id=batch.batch_id,
+                       turn_id=message.turn_id if message else None, admitted=False, reason='shutdown')
             if message is not None:
                 self._finish(message, 'reply.cancelled', {'reason': 'shutdown'}, batch_id=batch.batch_id)
 
