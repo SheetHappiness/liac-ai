@@ -2,6 +2,7 @@
 
 import asyncio
 import logging
+from collections.abc import Awaitable, Callable
 from contextlib import closing
 from typing import Literal
 
@@ -10,7 +11,8 @@ from vtuber.contracts.mind import MindDecision, SingleMindPort
 from vtuber.contracts.perception import Perception, PerceptionBatch
 from vtuber.contracts.protocols import OutputSink
 from vtuber.contracts.trace import TraceSink, emit_trace
-from vtuber.minds.m6_context import build_m6_messages
+from vtuber.minds.m6_context import SingleContext, TokenBudget, build_m6_messages
+from vtuber.runtime.handoff import HandoffWorker
 from vtuber.runtime.journal import Journal
 from vtuber.runtime.perception_bus import PerceptionBus
 
@@ -21,13 +23,19 @@ logger = logging.getLogger(__name__)
 class SingleMindRuntime:
     def __init__(self, character_id: str, journal: Journal, mind: SingleMindPort,
                  output: OutputSink, *, identity: str, bus: PerceptionBus | None = None,
-                 trace: TraceSink | None = None) -> None:
+                 trace: TraceSink | None = None, budget: TokenBudget | None = None,
+                 summarize: Callable[[tuple[dict, ...]], Awaitable[str]] | None = None,
+                 model_metrics: Callable[[], dict] | None = None) -> None:
         self.character_id = character_id
         self.journal = journal
         self.mind = mind
         self.output = output
         self.identity = identity
         self.trace = trace
+        self.context = SingleContext(identity, budget) if budget is not None else None
+        self.handoff = HandoffWorker(character_id, journal, self.context, summarize, trace) if (
+            self.context is not None and summarize is not None) else None
+        self.model_metrics = model_metrics
         self.bus = bus if bus is not None else PerceptionBus(trace=trace)
         self._owner: asyncio.Task[None] | None = None
         self._started = False
@@ -39,6 +47,8 @@ class SingleMindRuntime:
         for message in self.journal.unfinished_inputs(self.character_id):
             self._finish(message, 'reply.cancelled', {'reason': 'process_restarted'}, notify=False)
         self._started = True
+        if self.handoff is not None:
+            self.handoff.schedule()
 
     async def publish(self, item: Perception) -> bool:
         if not self._started or self._closed:
@@ -98,6 +108,8 @@ class SingleMindRuntime:
         else:
             self._finish(message, 'reply.completed', {'text': decision.message,
                 'action': decision.action, 'tool_call_id': decision.tool_call_id}, batch_id=batch.batch_id)
+            if self.handoff is not None:
+                self.handoff.schedule(completed=True)
 
     async def _turn(self, message: Event, batch: PerceptionBatch) -> MindDecision:
         task = asyncio.current_task()
@@ -111,12 +123,22 @@ class SingleMindRuntime:
                 index += 1
                 self._emit(RuntimeOutput('reply.delta', self.character_id, message.turn_id, text, index))
 
-        with closing(self.journal.iter_dialogue_newest_first(self.character_id)) as dialogue:
-            messages = build_m6_messages(self.identity, dialogue, lookup=self.journal.get)
+        context_data = {}
+        if self.context is None:
+            with closing(self.journal.iter_dialogue_newest_first(self.character_id)) as dialogue:
+                messages = build_m6_messages(self.identity, dialogue, lookup=self.journal.get)
+        else:
+            through, recap = self.journal.read_recap(self.character_id)
+            with closing(self.journal.iter_dialogue_newest_first(self.character_id, after=through)) as dialogue:
+                projection = self.context.project(dialogue, recap, current=message, lookup=self.journal.get)
+            messages = projection.messages
+            context_data = {'estimated_input_tokens': projection.estimated_tokens,
+                            'history_omitted': projection.omitted, 'covered_through_sequence': through}
         emit_trace(self.trace, 'model.started', batch.batch_id, batch_id=batch.batch_id,
-                   turn_id=message.turn_id, started_at=utc_now())
+                   turn_id=message.turn_id, started_at=utc_now(), **context_data)
         status = 'failed'
         action = None
+        usage = None
         try:
             decision = await self.mind.generate(messages, on_speak_delta=preview)
             if task.cancelling():
@@ -124,14 +146,24 @@ class SingleMindRuntime:
             if not isinstance(decision, MindDecision) or not decision.tool_call_id.strip():
                 raise ValueError('Expected one completed tool decision with an ID')
             status, action = 'completed', decision.action
+            usage = decision.usage
             return decision
         except asyncio.CancelledError:
             status = 'cancelled'
             raise
         finally:
             streaming = False
+            metrics = {}
+            if self.model_metrics is not None:
+                try:
+                    metrics = self.model_metrics()
+                except Exception as error:
+                    logger.warning('Model metrics unavailable: %s', type(error).__name__)
+            if usage is not None:
+                metrics = {**metrics, 'usage': usage, 'actual_input_tokens': sum(
+                    usage.get(key, 0) for key in ('input', 'cacheRead', 'cacheWrite'))}
             emit_trace(self.trace, 'model.completed', batch.batch_id, batch_id=batch.batch_id,
-                       turn_id=message.turn_id, ended_at=utc_now(), status=status, action=action)
+                       turn_id=message.turn_id, ended_at=utc_now(), status=status, action=action, **metrics)
 
     def _emit(self, output: RuntimeOutput) -> None:
         try:
@@ -175,4 +207,6 @@ class SingleMindRuntime:
             if stopping:
                 owner.cancel()
             await asyncio.shield(asyncio.gather(owner, return_exceptions=True))
+        if self.handoff is not None:
+            await self.handoff.close()
         await self._flush_shutdown()

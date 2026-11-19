@@ -17,6 +17,7 @@ from vtuber.cli import input_lines
 from vtuber.contracts.events import RuntimeOutput, utc_now
 from vtuber.contracts.perception import Perception
 from vtuber.minds.luna_stream import LunaStream, LunaStreamError
+from vtuber.minds.m6_context import TokenBudget
 from vtuber.runtime.journal import Journal
 from vtuber.runtime.perception_bus import PerceptionBus, PerceptionQueueFull
 from vtuber.runtime.single_mind import SingleMindRuntime
@@ -53,11 +54,20 @@ def emit_journal(journal: Journal, write, after: int = 0) -> int:
     return after
 
 
-def read_replay(path: Path, write=send) -> None:
+def journal_path(path: Path) -> Path:
     db = path / 'journal.sqlite3'
     if db.resolve().parent != path.resolve():
         raise ValueError('Invalid journal path')
-    with closing(Journal(db, read_only=True)) as journal:
+    return db
+
+
+def resume_journal(source: Path, destination: Path) -> None:
+    with closing(Journal(journal_path(source), read_only=True)) as journal:
+        journal.backup_to(destination)
+
+
+def read_replay(path: Path, write=send) -> None:
+    with closing(Journal(journal_path(path), read_only=True)) as journal:
         emit_journal(journal, write)
     expected = 0
     try:
@@ -84,10 +94,15 @@ def read_replay(path: Path, write=send) -> None:
         write('trace', row=dict(kind='capture.gap', capture_gap='Trace index is unreadable.'))
 
 
-async def run_hub(bun_command: str) -> bool:
+async def run_hub(bun_command: str, resume: Path | None = None) -> bool:
     bun = shutil.which(bun_command)
     if bun is None:
         send('status', state='error', message='Install Bun or set LIAC_BUN to its executable.')
+        return False
+    try:
+        budget = TokenBudget.luna()
+    except (ImportError, OSError, ValueError):
+        send('status', state='error', message="Install the Luna extra with python -m pip install -e '.[luna]'.")
         return False
     capture_context = False
     record_turn_context = False
@@ -107,8 +122,6 @@ async def run_hub(bun_command: str) -> bool:
         if kind == 'model.started':
             model_turn = {key: data[key] for key in ('turn_id', 'batch_id')}
             record_turn_context = capture_context
-        elif kind == 'model.completed':
-            data = {**data, 'timings_ms': mind.last_timings}
         sequence += 1
         row = dict(sequence=sequence, time=utc_now(), kind=kind, request_id=request_id, data=data)
         if recorder is not None:
@@ -122,12 +135,16 @@ async def run_hub(bun_command: str) -> bool:
             trace('model.bridge_input', model_turn['batch_id'], {**model_turn,
                   'system': frame['system'], 'messages': frame['messages'], 'reasoning': frame['reasoning']})
 
-    mind = LunaStream((bun, '--no-env-file', str(ROOT / 'tools/luna-bridge/bridge.mjs')),
-                      on_bridge_input=bridge_input)
+    command = (bun, '--no-env-file', str(ROOT / 'tools/luna-bridge/bridge.mjs'))
+    mind = LunaStream(command, on_bridge_input=bridge_input)
+    handoff = LunaStream(command, recap=True)
     try:
         await mind.check_ready()
         recorder = QueuedTraceRecorder(RUNS)
-        with closing(Journal(recorder.path / 'journal.sqlite3')) as journal:
+        db = recorder.path / 'journal.sqlite3'
+        if resume is not None:
+            resume_journal(resume, db)
+        with closing(Journal(db)) as journal:
             def output(event: RuntimeOutput) -> None:
                 if event.kind == 'reply.delta':
                     send('preview', **asdict(event))
@@ -137,10 +154,12 @@ async def run_hub(bun_command: str) -> bool:
             identity = files('vtuber.minds').joinpath('character.md').read_text(encoding='utf-8')
             bus = PerceptionBus(live_gap=1.2, max_window=None, trace=trace)
             runtime = SingleMindRuntime(CHARACTER, journal, mind, output, identity=identity,
-                                        bus=bus, trace=trace)
+                                        bus=bus, trace=trace, budget=budget, summarize=handoff.summarize,
+                                        model_metrics=mind.trace_metrics)
             await runtime.start()
-            send('status', state='ready', run=recorder.path.name)
             try:
+                flush_journal()
+                send('status', state='ready', run=recorder.path.name)
                 async with asyncio.TaskGroup() as tasks:
                     owner = tasks.create_task(runtime.run())
                     try:
@@ -178,7 +197,10 @@ async def run_hub(bun_command: str) -> bool:
         return False
     finally:
         try:
-            await mind.close()
+            try:
+                await mind.close()
+            finally:
+                await handoff.close()
         finally:
             if recorder is not None:
                 await recorder.aclose()
@@ -193,21 +215,27 @@ async def run_hub(bun_command: str) -> bool:
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument('--bun', default='bun')
-    parser.add_argument('--replay')
+    run_mode = parser.add_mutually_exclusive_group()
+    run_mode.add_argument('--replay')
+    run_mode.add_argument('--resume')
     args = parser.parse_args()
     try:
-        if args.replay:
-            if not re.fullmatch(r'run-[a-f0-9]{32}', args.replay):
+        run = None
+        if selected := args.replay or args.resume:
+            if not re.fullmatch(r'run-[a-f0-9]{32}', selected):
                 raise ValueError('Invalid run ID')
-            run = RUNS / args.replay
+            run = RUNS / selected
             if run.resolve().parent != RUNS.resolve():
                 raise ValueError('Invalid run path')
+        if args.replay:
             read_replay(run)
-        elif not asyncio.run(run_hub(args.bun)):
+        elif not asyncio.run(run_hub(args.bun, run)):
             sys.exit(1)
     except Exception:
-        send('status', state='error', message='Replay could not read this run.' if args.replay else
-             'Liac stopped unexpectedly. Check write access to .data and retry.')
+        message = ('Replay could not read this run.' if args.replay else
+                   'The selected run could not be resumed.' if args.resume else
+                   'Liac stopped unexpectedly. Check write access to .data and retry.')
+        send('status', state='error', message=message)
         sys.exit(1)
 
 

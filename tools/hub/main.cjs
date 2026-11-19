@@ -14,15 +14,17 @@ const bun = process.env.LIAC_BUN || (existsSync(localBun) ? localBun : 'bun');
 const runId = /^run-[a-f0-9]{32}$/;
 let window, live, replay;
 let currentRun;
+let resumeFrom;
 let ready = false;
 let quitting = false;
+let switching = false;
 
 function deliver(stream, frame) {
     if (window && !window.isDestroyed()) window.webContents.send('hub:frame', stream, frame);
 }
 
-function status(state, message) {
-    deliver('live', { type: 'status', state, message });
+function status(state, message, fields = {}) {
+    deliver('live', { type: 'status', state, message, ...fields });
 }
 
 function worker(args, onFrame, onStop) {
@@ -43,28 +45,51 @@ function worker(args, onFrame, onStop) {
     return child;
 }
 
-function start() {
+function start(resume) {
     if (live || quitting) return;
+    resumeFrom = resume;
     ready = false;
     currentRun = undefined;
     let reportedError = false;
-    status('starting', 'Checking the Luna bridge and sign-in.');
-    live = worker(['--bun', bun], frame => {
+    status('starting', 'Checking the Luna bridge and sign-in.', { resuming: Boolean(resume) });
+    const args = ['--bun', bun];
+    if (resume) args.push('--resume', resume);
+    live = worker(args, frame => {
         if (frame.type === 'status') {
             ready = frame.state === 'ready';
             reportedError = frame.state === 'error';
-            if (ready) currentRun = frame.run;
+            if (ready) {
+                currentRun = frame.run;
+                resumeFrom = undefined;
+            }
         }
         if (!quitting) deliver('live', frame);
     }, code => {
         live = undefined;
         ready = false;
-        if (!quitting && !reportedError) {
+        if (!quitting && !switching && !reportedError) {
             status('error', code === -4058 || code === -2
                 ? 'Install Python 3.12 or newer, or set LIAC_PYTHON.'
                 : 'Liac stopped. Check Python 3.12+, Bun, and the bridge setup, then retry.');
         }
-        if (!quitting) deliver('live', { type: 'retry_available' });
+        if (!quitting && !switching) deliver('live', { type: 'retry_available' });
+    });
+}
+
+function stopLive(child) {
+    return new Promise(resolve => {
+        const timeout = setTimeout(() => {
+            if (process.platform === 'win32' && child.pid) {
+                const kill = spawn(path.join(process.env.SystemRoot || 'C:/Windows', 'System32/taskkill.exe'),
+                    ['/pid', String(child.pid), '/T', '/F'], { windowsHide: true, stdio: 'ignore' });
+                kill.on('error', () => child.kill());
+                kill.on('close', code => { if (code !== 0) child.kill(); });
+            } else {
+                child.kill();
+            }
+        }, 18_000);
+        child.once('close', () => { clearTimeout(timeout); resolve(); });
+        child.stdin.end();
     });
 }
 
@@ -83,7 +108,9 @@ function handle(name, fn) {
     });
 }
 
-handle('start', start);
+handle('start', () => {
+    if (!switching) start(resumeFrom);
+});
 handle('submit', (id, text) => {
     if (typeof id !== 'string' || !/^[a-f0-9-]{36}$/.test(id) ||
         typeof text !== 'string' || !text.trim() || text.length > 8000 || !text.isWellFormed()) {
@@ -123,6 +150,25 @@ handle('replay', (id, token) => {
     });
     replay = child;
 });
+handle('resume', async id => {
+    if (typeof id !== 'string' || !runId.test(id) || id === currentRun ||
+        quitting || switching || (live && !ready)) throw new Error('Select a previous run.');
+    const source = await stat(path.join(runRoot, id, 'journal.sqlite3')).catch(() => null);
+    if (!source?.isFile() || quitting || switching || id === currentRun || (live && !ready)) {
+        throw new Error('The selected run is unavailable.');
+    }
+    switching = true;
+    ready = false;
+    const previous = replay;
+    replay = undefined;
+    previous?.kill();
+    try {
+        if (live) await stopLive(live);
+        start(id);
+    } finally {
+        switching = false;
+    }
+});
 
 if (!app.requestSingleInstanceLock()) {
     app.quit();
@@ -155,17 +201,6 @@ app.on('before-quit', event => {
     if (quitting) return;
     quitting = true;
     ready = false;
-    const child = live;
-    child.stdin.end();
-    const timeout = setTimeout(() => {
-        if (process.platform === 'win32' && child.pid) {
-            const kill = spawn(path.join(process.env.SystemRoot || 'C:/Windows', 'System32/taskkill.exe'),
-                ['/pid', String(child.pid), '/T', '/F'], { windowsHide: true, stdio: 'ignore' });
-            kill.on('error', () => child.kill());
-            kill.on('close', code => { if (code !== 0) child.kill(); });
-        } else {
-            child.kill();
-        }
-    }, 18_000);
-    child.once('close', () => { clearTimeout(timeout); app.quit(); });
+    if (switching) live.once('close', () => app.quit());
+    else stopLive(live).then(() => app.quit());
 });

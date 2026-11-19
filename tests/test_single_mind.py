@@ -42,7 +42,7 @@ class SingleMindRuntimeTests(unittest.IsolatedAsyncioTestCase):
         self.traces = []
         self.changed = asyncio.Event()
 
-    async def start(self, mind, *, bus=None, trace=None, run=True):
+    async def start(self, mind, *, bus=None, trace=None, run=True, model_metrics=None):
         def output(value):
             self.outputs.append(value)
             self.changed.set()
@@ -51,7 +51,7 @@ class SingleMindRuntimeTests(unittest.IsolatedAsyncioTestCase):
             self.traces.append((kind, batch_id, data))
 
         runtime = SingleMindRuntime('primary', self.journal, mind, output, identity='You are Liac.',
-                                    bus=bus, trace=trace or capture)
+                                    bus=bus, trace=trace or capture, model_metrics=model_metrics)
         await runtime.start()
         self.addAsyncCleanup(runtime.close)
         if run:
@@ -129,6 +129,20 @@ class SingleMindRuntimeTests(unittest.IsolatedAsyncioTestCase):
         groups = self.events('user.message.completed')
         self.assertEqual([group.payload['perception_ids'] for group in groups], [['first'], ['second']])
         self.assertEqual(len(mind.calls), 2)
+
+    async def test_metrics_failure_cannot_discard_a_successful_reply(self):
+        def unavailable():
+            raise OSError('Private diagnostic')
+
+        usage = {'input': 12, 'cacheRead': 8, 'cacheWrite': 5}
+        mind = ScriptedMind(MindDecision('speak', 'Done', 'done-id', usage))
+        runtime = await self.start(mind, bus=PerceptionBus(text_gap=0), model_metrics=unavailable)
+        await runtime.publish(perception('metrics'))
+        await self.finish(runtime)
+        self.assertEqual(self.events('character.reply.completed')[0].payload['text'], 'Done')
+        completed = next(data for kind, _, data in self.traces if kind == 'model.completed')
+        self.assertEqual(completed['actual_input_tokens'], 25)
+        self.assertNotIn('Private diagnostic', json.dumps(self.traces))
 
     async def test_busy_backlog_is_serial_and_does_not_settle_twice(self):
         entered = asyncio.Event()

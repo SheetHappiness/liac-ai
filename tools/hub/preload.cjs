@@ -6,5 +6,6 @@ contextBridge.exposeInMainWorld('liac', {
     recordContext: enabled => ipcRenderer.invoke('hub:context', enabled),
     runs: () => ipcRenderer.invoke('hub:runs'),
     replay: (id, token) => ipcRenderer.invoke('hub:replay', id, token),
+    resume: id => ipcRenderer.invoke('hub:resume', id),
     onFrame: callback => ipcRenderer.on('hub:frame', (_event, stream, frame) => callback(stream, frame)),
 });

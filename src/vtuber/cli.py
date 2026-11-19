@@ -18,6 +18,7 @@ from vtuber.contracts.perception import Perception
 from vtuber.contracts.trace import TraceSink
 from vtuber.minds.fake import FakeSingleMind
 from vtuber.minds.luna_stream import LunaStream
+from vtuber.minds.m6_context import TokenBudget
 from vtuber.runtime.journal import Journal
 from vtuber.runtime.perception_bus import PerceptionQueueFull
 from vtuber.runtime.single_mind import SingleMindRuntime
@@ -108,10 +109,13 @@ class ConsoleOutput:
                 print(f'[{output.kind.removeprefix("reply.").capitalize()}] {output.text}', flush=True)
 
 
-async def run_console(db: Path, mind: SingleMindPort, *, trace: TraceSink | None = None) -> None:
+async def run_console(db: Path, mind: SingleMindPort, *, trace: TraceSink | None = None,
+                      budget: TokenBudget | None = None, handoff: LunaStream | None = None) -> None:
     identity = files('vtuber.minds').joinpath('character.md').read_text(encoding='utf-8')
     with closing(Journal(db)) as journal:
-        runtime = SingleMindRuntime('primary', journal, mind, ConsoleOutput(), identity=identity, trace=trace)
+        runtime = SingleMindRuntime('primary', journal, mind, ConsoleOutput(), identity=identity, trace=trace,
+                                    budget=budget, summarize=handoff.summarize if handoff else None,
+                                    model_metrics=mind.trace_metrics if isinstance(mind, LunaStream) else None)
         await runtime.start()
 
         print('Liac Single Mind | Enter text or /quit.', flush=True)
@@ -135,17 +139,22 @@ async def run_console(db: Path, mind: SingleMindPort, *, trace: TraceSink | None
             await runtime.close()
 
 
-async def _run(db: Path, mind: SingleMindPort, *, trace: bool) -> None:
+async def _run(db: Path, mind: SingleMindPort, *, trace: bool, budget: TokenBudget | None = None,
+               handoff: LunaStream | None = None) -> None:
     recorder = QueuedTraceRecorder(Path('.data/traces')) if trace else None
     try:
-        await run_console(db, mind, trace=recorder)
+        await run_console(db, mind, trace=recorder, budget=budget, handoff=handoff)
     finally:
         try:
             if isinstance(mind, LunaStream):
                 await mind.close()
         finally:
-            if recorder is not None:
-                await recorder.aclose()
+            try:
+                if handoff is not None:
+                    await handoff.close()
+            finally:
+                if recorder is not None:
+                    await recorder.aclose()
 
 
 def main() -> None:
@@ -166,8 +175,15 @@ def main() -> None:
             bridge = Path(__file__).resolve().parents[2] / 'tools/luna-bridge/bridge.mjs'
             if not bridge.is_file():
                 parser.error('Run the Luna backend from the Liac source checkout with its bridge installed')
-            mind = LunaStream((bun, '--no-env-file', str(bridge)), reasoning=args.reasoning)
-            asyncio.run(_run(args.db or Path('.data/m6-0.sqlite3'), mind, trace=args.trace))
+            try:
+                budget = TokenBudget.luna()
+            except (ImportError, OSError, ValueError):
+                parser.error("Luna requires o200k_base. Install it with python -m pip install -e '.[luna]'.")
+            command = (bun, '--no-env-file', str(bridge))
+            mind = LunaStream(command, reasoning=args.reasoning)
+            handoff = LunaStream(command, reasoning=args.reasoning, recap=True)
+            asyncio.run(_run(args.db or Path('.data/m6-0.sqlite3'), mind, trace=args.trace,
+                             budget=budget, handoff=handoff))
     except KeyboardInterrupt:
         print('\nSingle Mind interrupted.', flush=True)
 

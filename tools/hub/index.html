@@ -31,6 +31,7 @@
       </header>
       <div class="toolbar">
         <select id="runs" aria-label="Recorded run" hidden></select>
+        <button id="resume" hidden>Resume</button>
         <label id="capture-setting"><input type="checkbox" id="capture" disabled> Record model context</label>
         <span id="count"></span>
       </div>
@@ -39,7 +40,7 @@
         <select id="filter" aria-label="Filter trace events">
           <option value="">All events</option>
           <option value="perception|batch|admission">Perception &amp; admission</option>
-          <option value="turn|model|reply">Model &amp; actions</option>
+          <option value="turn|model|reply|handoff">Model &amp; actions</option>
         </select>
       </div>
       <div id="timeline" class="timeline" aria-label="Trace timeline"></div>

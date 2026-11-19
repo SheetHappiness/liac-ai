@@ -31,7 +31,7 @@ class Journal:
             self._db.execute("PRAGMA journal_mode=WAL")
             self._db.execute("PRAGMA synchronous=FULL")
             version = self._db.execute("PRAGMA user_version").fetchone()[0]
-            if version not in (0, 1, 2):
+            if version not in (0, 1, 2, 3):
                 raise ValueError(f"Unsupported database version: {version}")
             with self._transaction():
                 self._db.execute("""CREATE TABLE IF NOT EXISTS events (
@@ -41,7 +41,10 @@ class Journal:
                 self._db.execute("""CREATE UNIQUE INDEX IF NOT EXISTS user_turn ON events
                     (character_id, json_extract(content, '$.turn_id'))
                     WHERE json_extract(content, '$.kind') = 'user.message.completed'""")
-                self._db.execute("PRAGMA user_version=2")
+                self._db.execute("""CREATE TABLE IF NOT EXISTS context_recap (
+                    character_id TEXT PRIMARY KEY, covered_through_sequence INTEGER NOT NULL,
+                    recap TEXT NOT NULL)""")
+                self._db.execute("PRAGMA user_version=3")
         except BaseException:
             self._db.close()
             raise
@@ -58,6 +61,32 @@ class Journal:
 
     def close(self) -> None:
         self._db.close()
+
+    def read_recap(self, character_id: CharacterId) -> tuple[int, str]:
+        row = self._db.execute("""SELECT covered_through_sequence, recap FROM context_recap
+            WHERE character_id=?""", (character_id,)).fetchone()
+        return (row[0], row[1]) if row else (0, '')
+
+    def commit_recap(self, character_id: CharacterId, previous: int, through: int, recap: str) -> bool:
+        if through <= previous or not isinstance(recap, str) or not recap.strip():
+            raise ValueError('Recap must advance coverage and contain text')
+        with self._transaction():
+            if self.read_recap(character_id)[0] != previous:
+                return False
+            boundary = self._db.execute("""SELECT 1 FROM events WHERE character_id=? AND sequence=?
+                AND json_extract(content, '$.kind')='character.reply.completed'""",
+                (character_id, through)).fetchone()
+            if boundary is None:
+                raise ValueError('Recap must end at a completed turn')
+            self._db.execute("""INSERT INTO context_recap VALUES (?, ?, ?)
+                ON CONFLICT(character_id) DO UPDATE SET
+                covered_through_sequence=excluded.covered_through_sequence, recap=excluded.recap""",
+                (character_id, through, recap))
+            return True
+
+    def backup_to(self, path: Path) -> None:
+        with closing(sqlite3.connect(path)) as destination:
+            self._db.backup(destination)
 
     @staticmethod
     def _decode(row: sqlite3.Row) -> Event:
@@ -153,11 +182,21 @@ class Journal:
         return tuple(reversed(list(self.iter_dialogue_newest_first(character_id, limit=limit))))
 
     def iter_dialogue_newest_first(self, character_id: CharacterId, *,
-                                  limit: int = -1) -> Generator[Event, None, None]:
+                                  limit: int = -1, after: int = 0) -> Generator[Event, None, None]:
         """Yield dialogue in reverse journal order until exhausted or closed."""
-        with closing(self._db.execute("""SELECT * FROM events WHERE character_id=? AND
+        yield from self._iter_dialogue(character_id, after, 2**63 - 1, limit, newest_first=True)
+
+    def iter_dialogue_between(self, character_id: CharacterId, after: int,
+                              through: int) -> Generator[Event, None, None]:
+        yield from self._iter_dialogue(character_id, after, through, -1, newest_first=False)
+
+    def _iter_dialogue(self, character_id: CharacterId, after: int, through: int,
+                       limit: int, *, newest_first: bool) -> Generator[Event, None, None]:
+        order = 'DESC' if newest_first else 'ASC'
+        with closing(self._db.execute(f"""SELECT * FROM events WHERE character_id=? AND sequence>?
+            AND sequence<=? AND
             json_extract(content, '$.kind') IN ('user.message.completed', 'character.reply.completed')
-            ORDER BY sequence DESC LIMIT ?""", (character_id, limit))) as rows:
+            ORDER BY sequence {order} LIMIT ?""", (character_id, after, through, limit))) as rows:
             for row in rows:
                 yield self._decode(row)
 

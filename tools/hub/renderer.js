@@ -10,6 +10,10 @@ const names = {
     'model.started': 'Luna request started',
     'model.completed': 'Luna request ended',
     'model.bridge_input': 'Bridge input',
+    'handoff.started': 'Recap started',
+    'handoff.completed': 'Recap finished',
+    'handoff.failed': 'Recap failed',
+    'handoff.skipped': 'Recap skipped',
     'capture.gap': 'Capture gap',
 };
 const reasons = {
@@ -31,6 +35,8 @@ let state = 'starting';
 let notice = 'Checking the Luna bridge and sign-in.';
 let inputError = false;
 let replayNotice = '';
+let replayLoaded = false;
+let switching = false;
 let renderPending = false;
 
 function session() {
@@ -183,6 +189,8 @@ function render() {
     ui['live-tab'].setAttribute('aria-pressed', String(!isReplay));
     ui['replay-tab'].setAttribute('aria-pressed', String(isReplay));
     ui.runs.hidden = !isReplay;
+    ui.resume.hidden = !isReplay;
+    ui.resume.disabled = switching || !replayLoaded || state === 'starting';
     ui['capture-setting'].hidden = isReplay;
     ui.capture.disabled = state !== 'ready';
     ui.status.dataset.state = state;
@@ -199,6 +207,15 @@ function render() {
 
 function receive(stream, frame) {
     if (stream !== 'live' && (stream !== token || !isReplay)) return;
+    if (stream === 'live' && frame.type === 'status' && frame.resuming) {
+        live = session();
+        isReplay = false;
+        token++;
+        pending.clear();
+        ui.capture.checked = false;
+        ui.retry.hidden = true;
+        inputError = false;
+    }
     const view = stream === 'live' ? live : recorded;
     if (frame.type === 'status') {
         if (stream !== 'live') {
@@ -238,6 +255,7 @@ function receive(stream, frame) {
             view.chatDirty = true;
         }
     } else if (frame.type === 'replay_end' && frame.ok) {
+        replayLoaded = true;
         replayNotice = 'Recorded run · Read only';
     } else if (frame.type === 'replay_end') {
         replayNotice = 'Replay could not read this run.';
@@ -248,6 +266,7 @@ function receive(stream, frame) {
 async function loadReplay() {
     const id = ui.runs.value;
     const request = ++token;
+    replayLoaded = false;
     recorded = session();
     replayNotice = id ? 'Loading recorded run…' : 'No recorded runs yet.';
     schedule();
@@ -256,8 +275,9 @@ async function loadReplay() {
 }
 
 ui['replay-tab'].onclick = async () => {
-    if (isReplay) return;
+    if (isReplay || switching) return;
     isReplay = true;
+    replayLoaded = false;
     recorded = session();
     replayNotice = 'Loading runs…';
     schedule();
@@ -270,7 +290,7 @@ ui['replay-tab'].onclick = async () => {
     } catch { replayNotice = 'Could not list recorded runs.'; schedule(); }
 };
 ui['live-tab'].onclick = () => {
-    if (!isReplay) return;
+    if (!isReplay || switching) return;
     isReplay = false;
     token++;
     live.chatDirty = true;
@@ -278,6 +298,22 @@ ui['live-tab'].onclick = () => {
     schedule();
 };
 ui.runs.onchange = loadReplay;
+ui.resume.onclick = async () => {
+    if (ui.resume.disabled) return;
+    switching = true;
+    ui.resume.disabled = true;
+    ui.runs.disabled = true;
+    try {
+        await window.liac.resume(ui.runs.value);
+    } catch {
+        replayNotice = 'The selected run could not be resumed.';
+        schedule();
+    } finally {
+        switching = false;
+        ui.runs.disabled = false;
+        schedule();
+    }
+};
 ui.filter.onchange = schedule;
 ui['clear-selection'].onclick = () => select(null);
 

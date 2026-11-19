@@ -5,7 +5,8 @@ import test from "node:test";
 for (const script of ["probe.mjs", "bridge.mjs"]) {
     test(`${script} disables request dumps before loading pi-ai`, () => {
         const entry = new URL(script, import.meta.url).href;
-        const child = spawnSync(process.execPath, ["--input-type=module", "--eval", `
+        const node = process.versions.bun ? "node" : process.execPath;
+        const child = spawnSync(node, ["--input-type=module", "--eval", `
             import { registerHooks } from "node:module";
             registerHooks({
                 resolve(id, context, next) {

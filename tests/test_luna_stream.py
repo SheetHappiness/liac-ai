@@ -36,6 +36,8 @@ for line in sys.stdin:
         send("result", action="speak", message="", tool_call_id="call_1")
     elif text == "silence":
         send("result", action="stay_silent", message="", tool_call_id="call_2")
+    elif text == "oversized_response":
+        send("speak_delta", text="x" * (64 * 1024))
     else:
         send("speak_delta", text="Hel")
         send("speak_delta", text="lo!")
@@ -58,6 +60,14 @@ class LunaStreamTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(deltas, ["Hel", "lo!"])
         self.assertEqual(decision, MindDecision("speak", "Hello!", "call_1", {"input": 5, "output": 2}))
         self.assertEqual(await self.generate("silence", self.fail), MindDecision("stay_silent", "", "call_2"))
+
+    async def test_request_and_response_have_separate_frame_limits(self):
+        self.assertEqual((await self.generate("λ" * 40_000)).message, "Hello!")
+        self.assertGreater(self.mind.last_request_bytes, 64 * 1024)
+        with self.assertRaisesRegex(LunaStreamError, "input_too_large"):
+            await self.generate("λ" * (4 * 1024 * 1024))
+        with self.assertRaisesRegex(LunaStreamError, "invalid_frame"):
+            await self.generate("oversized_response")
 
     async def test_projected_system_message_is_sent_separately(self):
         mind = LunaStream((sys.executable, "-u", "-c", FIXTURE), system="Fallback")

@@ -47,6 +47,7 @@ export function completedArguments(name, raw, final) {
     if (name === "speak" && /^"\s*\}\s*$/.test(messageParts(raw)?.afterBody ?? "") &&
         typeof parsed.message === "string" && parsed.message.trim() && parsed.message.isWellFormed() &&
         Object.keys(final).length === 1 && parsed.message === final.message) return parsed;
-    if (name === "stay_silent" && !Object.keys(parsed).length && !Object.keys(final).length) return parsed;
+    if ((name === "stay_silent" || name === "inspect_screen") &&
+        !Object.keys(parsed).length && !Object.keys(final).length) return parsed;
     return null;
 }

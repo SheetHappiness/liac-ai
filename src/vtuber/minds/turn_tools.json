@@ -1,0 +1,17 @@
+[
+  {
+    "name": "speak",
+    "description": "Say a short message.",
+    "parameters": {
+      "type": "object",
+      "properties": {"message": {"type": "string"}},
+      "required": ["message"],
+      "additionalProperties": false
+    }
+  },
+  {
+    "name": "stay_silent",
+    "description": "Say nothing.",
+    "parameters": {"type": "object", "properties": {}, "additionalProperties": false}
+  }
+]

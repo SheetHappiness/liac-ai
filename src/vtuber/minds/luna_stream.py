@@ -6,7 +6,8 @@ from uuid import uuid4
 from vtuber.contracts.mind import MindDecision
 
 
-MAX_FRAME_BYTES = 64 * 1024
+MAX_REQUEST_BYTES = 8 * 1024 * 1024
+MAX_RESPONSE_BYTES = 64 * 1024
 ERROR_KINDS = {
     "busy", "cancelled", "input_too_large", "invalid_request", "invalid_tool_call",
     "oauth_unavailable", "provider_error", "request_mismatch",
@@ -19,15 +20,23 @@ class LunaStreamError(RuntimeError):
 
 class LunaStream:
     def __init__(self, command: tuple[str, ...], *, system: str = "", reasoning: str = "low",
-                 on_bridge_input: Callable[[dict], None] | None = None) -> None:
+                 on_bridge_input: Callable[[dict], None] | None = None, recap: bool = False) -> None:
         self._command = command
         self._system = system
         self._reasoning = reasoning
         self._on_bridge_input = on_bridge_input
+        self._recap = recap
         self._lock = asyncio.Lock()
         self._process: asyncio.subprocess.Process | None = None
         self._closed = False
         self.last_timings: dict[str, int] = {}
+        self.last_request_bytes = 0
+
+    def trace_metrics(self) -> dict:
+        return {'request_bytes': self.last_request_bytes, 'timings_ms': self.last_timings}
+
+    async def summarize(self, messages: tuple[dict, ...]) -> str:
+        return (await self.generate(messages)).message
 
     async def _start(self) -> asyncio.subprocess.Process:
         if self._process is None or self._process.returncode is not None:
@@ -37,27 +46,28 @@ class LunaStream:
                     stdin=asyncio.subprocess.PIPE,
                     stdout=asyncio.subprocess.PIPE,
                     stderr=asyncio.subprocess.DEVNULL,
-                    limit=MAX_FRAME_BYTES,
+                    limit=MAX_RESPONSE_BYTES,
                 )
             except OSError:
                 raise LunaStreamError("startup_failed") from None
         return self._process
 
     @staticmethod
-    async def _send(process: asyncio.subprocess.Process, frame: dict[str, object]) -> None:
+    async def _send(process: asyncio.subprocess.Process, frame: dict[str, object]) -> int:
         data = json.dumps(frame, ensure_ascii=False, separators=(",", ":")).encode() + b"\n"
-        if len(data) > MAX_FRAME_BYTES:
+        if len(data) > MAX_REQUEST_BYTES:
             raise LunaStreamError("input_too_large")
         assert process.stdin is not None
         process.stdin.write(data)
         await process.stdin.drain()
+        return len(data)
 
     @staticmethod
     async def _read(process: asyncio.subprocess.Process, identifier: str) -> dict:
         assert process.stdout is not None
         try:
             line = await process.stdout.readline()
-            frame = json.loads(line) if 0 < len(line) <= MAX_FRAME_BYTES else None
+            frame = json.loads(line) if 0 < len(line) <= MAX_RESPONSE_BYTES and line.endswith(b"\n") else None
         except (ValueError, UnicodeError):
             raise LunaStreamError("invalid_frame") from None
         if not isinstance(frame, dict) or frame.get("id") != identifier:
@@ -94,6 +104,7 @@ class LunaStream:
                 system = messages[0]["content"]
                 messages = messages[1:]
             self.last_timings = {}
+            self.last_request_bytes = 0
             process = await self._start()
             identifier = uuid4().hex
             try:
@@ -101,7 +112,9 @@ class LunaStream:
                     "type": "turn", "id": identifier, "messages": messages,
                     "system": system, "reasoning": self._reasoning,
                 }
-                await self._send(process, request)
+                if self._recap:
+                    request["recap"] = True
+                self.last_request_bytes = await self._send(process, request)
                 if self._on_bridge_input is not None:
                     try:
                         self._on_bridge_input(request)

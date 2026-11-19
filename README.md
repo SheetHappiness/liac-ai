@@ -1,6 +1,6 @@
 # Liac Single Mind
 
-Liac is a local, text-only runtime inspired by ProjectBEA. A perception bus
+Liac is a local runtime inspired by ProjectBEA. A perception bus
 groups incoming events. The runtime records each batch in SQLite and runs one
 serialized turn for each batch with fresh direct input. GPT-6 Luna chooses
 `speak` or `stay_silent`. Streaming speech is provisional until the decision
@@ -15,11 +15,14 @@ committed speech as simulated TTS output. The simulator settles a batch after
 the burst. On the left, Live shows perception,
 batching, admission, model timing and actions. Select an event or chat message
 to inspect its turn. Replay opens earlier runs while the current runtime stays
-available in Live.
+available in Live. Select **Resume** in Replay to continue a recorded
+conversation in a new run. Hub takes a SQLite snapshot of the selected run
+and displays its chat in Live. Launching Hub starts a fresh conversation.
 
 With Node.js 22.12+, Python 3.12+ and Bun 1.4.4+, run once from the checkout:
 
 ```powershell
+python -m pip install -e '.[luna]'
 npm ci --prefix tools/hub
 npm ci --ignore-scripts --prefix tools/luna-bridge
 bun --no-env-file tools/luna-bridge/probe.mjs --login
@@ -52,6 +55,7 @@ The login uses the existing Codex OAuth flow. Run these commands from the
 checkout root with Bun on PATH or pass its path with `--bun`.
 
 ```powershell
+python -m pip install -e '.[luna]'
 npm ci --ignore-scripts --prefix tools/luna-bridge
 bun --no-env-file tools/luna-bridge/probe.mjs --login
 python -m vtuber --backend luna --reasoning low
@@ -63,15 +67,63 @@ Use `--db PATH` to select a different journal and `--trace` for local scheduling
 metadata. Use one process per journal. Input in the in-memory bus can be lost
 if the process is killed before the batch reaches SQLite.
 
+### Screen inspection on Windows
+
+In PowerShell, list the Windows display device names and set `LIAC_SCREEN_DISPLAY`
+to the number at the end of the game display's name before starting Liac.
+
+```powershell
+Add-Type -AssemblyName System.Windows.Forms
+[System.Windows.Forms.Screen]::AllScreens | Select-Object DeviceName, Bounds
+$env:LIAC_SCREEN_DISPLAY = '1'
+python -m vtuber --backend luna --reasoning low
+```
+
+With that setting, Luna can choose `inspect_screen` during a conversation turn.
+The Pi bridge takes a fresh screenshot of the selected display and sends it to
+the same Luna model as an image tool result. Luna can then speak or stay silent.
+A turn without inspection uses one model request. Each inspection adds a model
+request, with up to four inspections within the existing turn deadline.
+
+The whole selected display is sent to the model when inspected. Screenshots stay
+out of local files, the Journal, and diagnostics. Later turns retain the spoken
+conversation. Turn usage totals include every model request in the turn.
+
 ## Context
 
-Each request includes the character identity, tool instructions and a bounded
-suffix of journaled dialogue. The runtime reads newest events first and stops
-when the next event would exceed the 63 KiB projection budget. It sends the
-retained events in chronological order, with completed tool calls and their
-results together. The Python-Bun bridge caps each JSONL frame at 64 KiB.
-Older dialogue remains in SQLite. The runtime has no long-term memory or
-compaction.
+Luna receives the character instructions, a recap of older turns, recent
+whole turns in chronological order, and the current input. The estimate uses
+`o200k_base` and includes the tool schemas and replayed tool calls and results.
+The bridge accepts up to 8 MiB per request and 64 KiB per response, including
+the JSONL delimiters.
+
+At 37,500 estimated input tokens, a background handoff can fold an older
+prefix into a recap of up to 1,024 tokens. It keeps at least the two newest
+completed turns and all fragments since the last spoken reply out of the
+recap. SQLite commits the recap and its coverage together and keeps the
+original events. During a slow or failed handoff, a foreground turn uses the
+last saved recap and the newest whole turns that fit. The trace records
+whether history was omitted, the estimated and provider-reported input
+counts, frame size, and timing. The fake console retains its lightweight
+byte-bounded projection.
+
+The 50,000-token working budget is 80% of the largest successful synthetic
+recall probe, rounded down to 1,000 tokens. Each probe placed a unique
+checkpoint code more than 64 KiB before the end of the request and asked
+Luna to repeat it. Each response matched exactly.
+
+| Target | Estimated input | Reported input | Request bytes | First speech fragment |
+| ---: | ---: | ---: | ---: | ---: |
+| 16,000 | 15,249 | 14,977 | 213,860 | 1,099 ms |
+| 32,000 | 31,245 | 30,973 | 442,346 | 1,529 ms |
+| 64,000 | 63,249 | 62,977 | 899,464 | 1,630 ms |
+
+The probes used the live GPT-6 Luna low route through Pi. Each row is one
+synthetic run. The working context is scoped to a single conversation.
+In a separate live check, Hub resumed a journal after a handoff. Luna
+repeated the exact checkpoint code from the saved recap, with both recent
+silent turns preserved verbatim. The source journal and its replay were
+still available.
 
 ## Checks
 
