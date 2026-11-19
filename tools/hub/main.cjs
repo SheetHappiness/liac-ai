@@ -4,6 +4,18 @@ const { existsSync } = require('node:fs');
 const { readdir, stat } = require('node:fs/promises');
 const path = require('node:path');
 const { createInterface } = require('node:readline');
+const speechSdk = require('microsoft-cognitiveservices-speech-sdk');
+
+const { SPEECH_KEY, SPEECH_REGION, LIAC_TTS_VOICE, ...workerEnv } = process.env;
+const voiceEnabled = Boolean(SPEECH_KEY?.trim() && /^[a-z0-9]+$/i.test(SPEECH_REGION || ''));
+let synthesizer, synthesis;
+
+function cancelSynthesis() {
+    synthesis?.(null);
+    const previous = synthesizer;
+    synthesizer = undefined;
+    previous?.close(undefined, () => {});
+}
 
 const root = path.resolve(__dirname, '../..');
 const runRoot = path.join(root, '.data/hub/runs');
@@ -30,7 +42,7 @@ function status(state, message, fields = {}) {
 function worker(args, onFrame, onStop) {
     const child = spawn(python, ['-u', '-m', 'vtuber.hub', ...args], {
         cwd: root, windowsHide: true,
-        env: { ...process.env, PYTHONPATH: path.join(root, 'src'), PYTHONUTF8: '1' },
+        env: { ...workerEnv, PYTHONPATH: path.join(root, 'src'), PYTHONUTF8: '1' },
         stdio: ['pipe', 'pipe', 'ignore'],
     });
     const lines = createInterface({ input: child.stdout, crlfDelay: Infinity });
@@ -63,8 +75,10 @@ function start(resume) {
                 resumeFrom = undefined;
             }
         }
-        if (!quitting) deliver('live', frame);
+        if (!quitting) deliver('live', frame.type === 'status' && frame.state === 'ready'
+            ? { ...frame, voice_enabled: voiceEnabled } : frame);
     }, code => {
+        cancelSynthesis();
         live = undefined;
         ready = false;
         if (!quitting && !switching && !reportedError) {
@@ -118,6 +132,37 @@ handle('submit', (id, text) => {
     }
     command({ type: 'submit_transcript', id, text });
 });
+handle('synthesize', text => {
+    if (!voiceEnabled || !ready || quitting || switching || synthesis || typeof text !== 'string' ||
+        !text.trim() || text.length > 16_384 || !text.isWellFormed()) return null;
+    return new Promise(resolve => {
+        const finish = audio => {
+            clearTimeout(timeout);
+            if (synthesis !== finish) return;
+            synthesis = undefined;
+            resolve(audio);
+        };
+        const timeout = setTimeout(cancelSynthesis, 12_000);
+        synthesis = finish;
+        try {
+            if (!synthesizer) {
+                const config = speechSdk.SpeechConfig.fromSubscription(SPEECH_KEY, SPEECH_REGION);
+                config.speechSynthesisVoiceName = LIAC_TTS_VOICE?.trim() || 'en-US-AvaMultilingualNeural';
+                config.speechSynthesisOutputFormat = speechSdk.SpeechSynthesisOutputFormat.Riff24Khz16BitMonoPcm;
+                synthesizer = new speechSdk.SpeechSynthesizer(config, null);
+            }
+            const failed = () => { if (synthesis === finish) cancelSynthesis(); };
+            synthesizer.speakTextAsync(text, result => {
+                if (result.reason === speechSdk.ResultReason.SynthesizingAudioCompleted && result.audioData?.byteLength) {
+                    finish(result.audioData);
+                } else failed();
+            }, failed);
+        } catch {
+            cancelSynthesis();
+        }
+    });
+});
+handle('cancel-voice', cancelSynthesis);
 handle('context', enabled => {
     if (typeof enabled !== 'boolean') throw new Error('Expected a recording preference.');
     command({ type: 'record_context', enabled });
@@ -159,6 +204,7 @@ handle('resume', async id => {
     }
     switching = true;
     ready = false;
+    cancelSynthesis();
     const previous = replay;
     replay = undefined;
     previous?.kill();
@@ -195,6 +241,7 @@ if (!app.requestSingleInstanceLock()) {
 
 app.on('window-all-closed', () => app.quit());
 app.on('before-quit', event => {
+    cancelSynthesis();
     replay?.kill();
     if (!live) return;
     event.preventDefault();

@@ -10,7 +10,7 @@ is committed.
 
 The Electron app starts the real GPT-6 Luna runtime at low reasoning. The
 right-hand chat treats typed messages as final STT transcripts and displays
-committed speech as simulated TTS output. The simulator settles a batch after
+committed speech. The simulator settles a batch after
 1.2 seconds without another submitted transcript, with no time ceiling for
 the burst. On the left, Live shows perception,
 batching, admission, model timing and actions. Select an event or chat message
@@ -31,6 +31,20 @@ bun --no-env-file tools/luna-bridge/probe.mjs --login
 Open [Start-Hub.cmd](Start-Hub.cmd) on Windows or run `npm start --prefix tools/hub`.
 Hub uses the checkout's `.venv` when present. Set `LIAC_PYTHON` and `LIAC_BUN` to
 override executable paths. Hub also checks `.data/hub/bin` for a local Bun.
+
+### Azure speech in Hub
+
+Set `SPEECH_KEY` and `SPEECH_REGION` in the environment that launches Hub to
+enable speech. Set `LIAC_TTS_VOICE` to override `en-US-AvaMultilingualNeural`.
+Hub sends sentence text to Azure and plays the returned audio locally. The
+first sentence can play while Luna is still generating the reply. Submitting
+another transcript interrupts the current audio. Replay displays recorded text.
+Without Azure configuration, Hub works as a text chat.
+
+Select a spoken turn in Live to see the estimated time to first audio output,
+measured from the latest transcript in the batch and from the first speech
+preview. These are local Web Audio estimates. Hub does not save audio or timing
+measurements to the run.
 
 Each Hub run stores chat and diagnostic events under `.data/hub/runs/`.
 **Record model context** is off on startup. Enabling it saves the exact

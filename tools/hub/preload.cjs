@@ -3,6 +3,8 @@ const { contextBridge, ipcRenderer } = require('electron');
 contextBridge.exposeInMainWorld('liac', {
     start: () => ipcRenderer.invoke('hub:start'),
     submit: (id, text) => ipcRenderer.invoke('hub:submit', id, text),
+    synthesize: text => ipcRenderer.invoke('hub:synthesize', text),
+    cancelVoice: () => ipcRenderer.invoke('hub:cancel-voice'),
     recordContext: enabled => ipcRenderer.invoke('hub:context', enabled),
     runs: () => ipcRenderer.invoke('hub:runs'),
     replay: (id, token) => ipcRenderer.invoke('hub:replay', id, token),

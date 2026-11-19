@@ -6,7 +6,7 @@
   <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self'">
   <title>Liac Hub</title>
   <link rel="stylesheet" href="hub.css">
-  <script defer src="renderer.js"></script>
+  <script type="module" src="renderer.js"></script>
 </head>
 <body>
   <header class="top">
@@ -56,7 +56,7 @@
     <section class="panel chat" aria-labelledby="chat-title">
       <header class="panel-heading">
         <h2 id="chat-title">Chat</h2>
-        <span class="channel">STT / TTS simulation</span>
+        <span id="voice-status" class="channel" role="status">STT simulation</span>
       </header>
       <div id="messages" class="messages" aria-label="Conversation"></div>
       <div class="compose">

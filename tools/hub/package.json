@@ -4,9 +4,13 @@
   "private": true,
   "main": "main.cjs",
   "scripts": {
-    "start": "electron ."
+    "start": "electron .",
+    "test": "node --test voice.test.mjs"
   },
   "devDependencies": {
     "electron": "45.3.4"
+  },
+  "dependencies": {
+    "microsoft-cognitiveservices-speech-sdk": "1.53.0"
   }
 }
