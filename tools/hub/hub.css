@@ -74,8 +74,8 @@ svg { width: 21px; height: 21px; fill: none; stroke: currentColor; stroke-width:
 .segmented button[aria-pressed="true"] { background: var(--accent-soft); color: var(--accent-ink); font-weight: 650; }
 .toolbar, .trace-heading, .detail-heading { padding: 8px 20px; }
 .toolbar { min-height: 48px; color: var(--muted); border-top: 1px solid var(--line); gap: 10px; }
-.toolbar label { display: flex; align-items: center; gap: 8px; font-size: 13px; }
-.toolbar input { accent-color: var(--accent); width: 17px; height: 17px; margin: 0; }
+.toolbar label, .voice-controls label { display: flex; align-items: center; gap: 8px; font-size: 13px; }
+.toolbar input, .voice-controls input { accent-color: var(--accent); width: 17px; height: 17px; margin: 0; }
 #count { margin-left: auto; white-space: nowrap; }
 .trace-heading { justify-content: space-between; }
 .trace-heading select, #runs { font-size: 12px; max-width: 75%; }
@@ -100,6 +100,22 @@ pre {
 #divider::before { content: ""; width: 3px; height: 30px; border-radius: 3px; background: var(--line); }
 #divider:hover::before, #divider:focus-visible::before { background: var(--accent); }
 .chat .panel-heading { border-bottom: 1px solid var(--line); }
+.voice-controls { display: flex; align-items: center; justify-content: flex-end; flex-wrap: wrap; gap: 6px 12px; }
+#voice-setup {
+    width: min(420px, calc(100% - 32px)); border: 1px solid var(--line); border-radius: 25px;
+    padding: 24px; background: var(--panel); color: var(--ink);
+}
+#voice-setup::backdrop { background: #10152580; }
+#voice-form, #voice-form label { display: grid; gap: 8px; }
+#voice-form { gap: 14px; }
+#voice-form p { color: var(--muted); }
+#voice-form input {
+    width: 100%; padding: 8px 12px; font: inherit; color: inherit; background: var(--fill);
+    border: 1px solid var(--line); border-radius: 11px;
+}
+#voice-form div { display: flex; justify-content: flex-end; gap: 8px; }
+#voice-form #voice-error { color: var(--error); }
+#voice-save { background: var(--accent); color: var(--on-accent); }
 .channel { background: var(--fill); border-radius: 100px; padding: 5px 9px; text-align: center; }
 .messages { overflow: auto; display: flex; flex-direction: column; align-items: flex-start; gap: 16px; padding: 20px; }
 .empty { color: var(--muted); padding: 12px 8px; }

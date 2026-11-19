@@ -40,7 +40,7 @@ let replayNotice = '';
 let replayLoaded = false;
 let switching = false;
 let renderPending = false;
-let voiceEnabled = false;
+let voiceAvailable = false;
 let audioContext, audioReady;
 const voice = new VoicePlayback({
     now: () => performance.now(),
@@ -57,6 +57,16 @@ const voice = new VoicePlayback({
     },
     onError() { ui['voice-status'].textContent = 'TTS unavailable · Text chat active'; },
 });
+
+function voiceEnabled() {
+    return state === 'ready' && voiceAvailable && ui['voice-toggle'].checked;
+}
+
+function updateVoiceStatus() {
+    ui['voice-status'].textContent = state !== 'ready' ? 'STT simulation' :
+        !voiceAvailable ? 'TTS off · Configure Azure Speech' :
+        voiceEnabled() ? 'STT simulation · Azure TTS' : 'STT simulation · TTS off';
+}
 
 function session() {
     return { rows: [], raw: new Map(), messages: [], turns: new Map(), batches: new Map(),
@@ -221,6 +231,7 @@ function render() {
     ui.status.dataset.state = state;
     ui.status.lastElementChild.textContent = { ready: 'Ready', starting: 'Starting', error: 'Offline' }[state];
     ui.transcript.disabled = isReplay || state !== 'ready';
+    ui['voice-toggle'].disabled = ui.transcript.disabled;
     ui.submit.disabled = ui.transcript.disabled || !ui.transcript.value.trim();
     ui.notice.textContent = isReplay ? replayNotice : notice || (pending.size > 0 ?
         `${pending.size} waiting for batch` : 'Ready for an STT transcript.');
@@ -249,9 +260,11 @@ function receive(stream, frame) {
         } else {
             state = frame.state;
             notice = frame.message || '';
-            voiceEnabled = state === 'ready' && frame.voice_enabled;
-            ui['voice-status'].textContent = voiceEnabled ? 'STT simulation · Azure TTS' :
-                state === 'ready' ? 'TTS off · Configure Azure Speech' : 'STT simulation';
+            if (state === 'ready') {
+                if (!voiceAvailable) ui['voice-toggle'].checked = Boolean(frame.voice_enabled);
+                voiceAvailable = Boolean(frame.voice_enabled);
+            }
+            updateVoiceStatus();
             if (state !== 'ready') voice.clear();
             if (state === 'error') {
                 pending.clear();
@@ -284,7 +297,7 @@ function receive(stream, frame) {
         } else if (event.kind !== 'character.reply.started') {
             if (event.kind === 'user.message.completed') {
                 view.turns.set(event.turn_id, event.payload);
-                if (stream === 'live' && !isReplay && voiceEnabled) {
+                if (stream === 'live' && !isReplay && voiceEnabled()) {
                     voice.begin(event.turn_id, event.payload.perception_ids || []);
                 }
             } else if (stream === 'live' && !isReplay && event.kind.startsWith('character.reply.')) {
@@ -358,6 +371,42 @@ ui.resume.onclick = async () => {
 ui.filter.onchange = schedule;
 ui['clear-selection'].onclick = () => select(null);
 
+ui['voice-toggle'].onchange = () => {
+    if (ui['voice-toggle'].checked && !voiceAvailable) {
+        ui['voice-toggle'].checked = false;
+        ui['voice-error'].hidden = true;
+        ui['voice-setup'].showModal();
+        return;
+    }
+    if (!ui['voice-toggle'].checked) {
+        voice.clear();
+        audioReady = undefined;
+    }
+    updateVoiceStatus();
+};
+ui['voice-cancel'].onclick = () => ui['voice-setup'].close();
+ui['voice-setup'].onclose = () => { ui['voice-key'].value = ''; };
+ui['voice-form'].onsubmit = async event => {
+    event.preventDefault();
+    ui['voice-save'].disabled = true;
+    ui['voice-error'].hidden = true;
+    try {
+        const key = ui['voice-key'].value.trim();
+        ui['voice-key'].value = '';
+        await window.liac.configureVoice(key, ui['voice-region'].value.trim());
+        voiceAvailable = true;
+        ui['voice-toggle'].checked = true;
+        ui['voice-setup'].close();
+        updateVoiceStatus();
+    } catch {
+        ui['voice-error'].textContent = 'Enter a Speech key and region from your Azure resource.';
+        ui['voice-error'].hidden = false;
+        ui['voice-key'].focus();
+    } finally {
+        ui['voice-save'].disabled = false;
+    }
+};
+
 ui.capture.onchange = async () => {
     const enabled = ui.capture.checked;
     ui.capture.disabled = true;
@@ -384,13 +433,18 @@ ui.composer.onsubmit = async event => {
     const text = ui.transcript.value.trim();
     if (!text || state !== 'ready' || isReplay) return;
     const id = crypto.randomUUID();
-    if (voiceEnabled) {
+    if (voiceEnabled()) {
         voice.submit('hub_' + id);
-        ui['voice-status'].textContent = 'STT simulation · Azure TTS';
+        updateVoiceStatus();
         try {
             audioContext ??= new AudioContext();
-            audioReady = audioContext.resume();
-            audioReady.catch(() => { ui['voice-status'].textContent = 'TTS unavailable · Text chat active'; });
+            const resume = audioContext.resume();
+            audioReady = resume;
+            resume.catch(() => {
+                if (audioReady === resume && voiceEnabled() && !isReplay) {
+                    ui['voice-status'].textContent = 'TTS unavailable · Text chat active';
+                }
+            });
         } catch {
             audioReady = undefined;
             ui['voice-status'].textContent = 'TTS unavailable · Text chat active';
@@ -435,6 +489,7 @@ function start() {
     ui.capture.checked = false;
     ui.retry.hidden = true;
     state = 'starting';
+    updateVoiceStatus();
     notice = 'Checking the Luna bridge and sign-in.';
     inputError = false;
     schedule();

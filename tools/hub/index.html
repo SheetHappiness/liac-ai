@@ -56,7 +56,10 @@
     <section class="panel chat" aria-labelledby="chat-title">
       <header class="panel-heading">
         <h2 id="chat-title">Chat</h2>
-        <span id="voice-status" class="channel" role="status">STT simulation</span>
+        <div class="voice-controls">
+          <label><input type="checkbox" id="voice-toggle" aria-describedby="voice-status" disabled> Voice</label>
+          <span id="voice-status" class="channel" role="status">STT simulation</span>
+        </div>
       </header>
       <div id="messages" class="messages" aria-label="Conversation"></div>
       <div class="compose">
@@ -72,5 +75,18 @@
       </div>
     </section>
   </main>
+  <dialog id="voice-setup" aria-labelledby="voice-title">
+    <form id="voice-form" autocomplete="off">
+      <h2 id="voice-title">Set up Azure Speech</h2>
+      <p>Use the key and region from your Azure Speech resource. Hub keeps them for this session.</p>
+      <label>Speech key <input id="voice-key" type="password" maxlength="256" required autofocus></label>
+      <label>Region <input id="voice-region" value="eastus" maxlength="32" required></label>
+      <p id="voice-error" role="alert" hidden></p>
+      <div>
+        <button type="button" id="voice-cancel">Cancel</button>
+        <button type="submit" id="voice-save">Enable voice</button>
+      </div>
+    </form>
+  </dialog>
 </body>
 </html>
