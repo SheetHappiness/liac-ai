@@ -7,6 +7,7 @@ from dataclasses import replace
 from pathlib import Path
 
 from test_perception import batch, perception
+from vtuber.contracts.context import ContextBudgetExceeded
 from vtuber.contracts.events import Event
 from vtuber.minds.m6_context import build_m6_messages
 from vtuber.runtime.journal import EventConflict, Journal
@@ -80,7 +81,8 @@ class M6ContextTests(unittest.TestCase):
             reply('', action='stay_silent', tool_call_id='quiet-2'),
             user('...how do I get from Chopin Airport to the city centre?'),
         )
-        _, first, call1, result1, second, call2, result2, latest = build_m6_messages('Identity', dialogue)
+        _, first, call1, result1, second, call2, result2, latest = build_m6_messages(
+            'Identity', reversed(dialogue))
         self.assertEqual([(message['role'], message['content']) for message in (first, second, latest)], [
             ('user', 'I wanted to ask...'),
             ('user', '...about Warsaw, specifically...'),
@@ -109,12 +111,20 @@ class M6ContextTests(unittest.TestCase):
         self.assertEqual((message['role'], message['content']), ('user', 'Latest'))
 
     def test_oversized_history_cannot_block_next_turn(self):
-        oversized = '⚙"' * 20_000
-        current = user('Latest')
+        large = '⚙"' * 7_000
+        current = user('Latest ' + large)
         previous = reply('Short reply', action='speak', tool_call_id='call_previous')
-        messages = build_m6_messages('Identity', (user(oversized), previous, current))
+
+        def newest_first():
+            yield current
+            yield previous
+            yield user(large)
+            self.fail('Context read past the first event that exceeded the budget')
+
+        messages = build_m6_messages('Identity', newest_first())
         self.assertEqual([message['role'] for message in messages], ['system', 'assistant', 'toolResult', 'user'])
-        self.assertEqual(messages[-1]['content'], 'Latest')
+        self.assertEqual(messages[1]['content'][0]['id'], messages[2]['toolCallId'])
+        self.assertEqual(messages[-1]['content'], current.payload['text'])
         self.assertLess(len(json.dumps(messages, ensure_ascii=False).encode()), 64 * 1024)
-        with self.assertRaises(ValueError):
-            build_m6_messages('Identity', (user(oversized),))
+        with self.assertRaises(ContextBudgetExceeded):
+            build_m6_messages('Identity', (user(large * 2),))

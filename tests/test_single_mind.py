@@ -189,6 +189,26 @@ class SingleMindRuntimeTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual([data['perception_ids'] for data in closes], [['first', 'second'], ['after-cap']])
         self.assertEqual(len(mind.calls), 2)
 
+    async def test_context_keeps_more_than_forty_dialogue_events_within_budget(self):
+        history = ['PX7M-K4Q2', *(f'History {i}' for i in range(20))]
+        for i, content in enumerate(history):
+            message = self.journal.accept_local_perceptions('primary', batch(perception(f'prior-{i}', content=content)))
+            self.journal.append(Event.create('primary', 'character.reply.completed',
+                {'text': '', 'action': 'stay_silent', 'tool_call_id': f'quiet-{i}'},
+                turn_id=message.turn_id, causation_id=message.event_id))
+
+        mind = ScriptedMind(MindDecision('stay_silent', tool_call_id='probe'))
+        runtime = await self.start(mind, bus=PerceptionBus(text_gap=0))
+        await runtime.publish(perception('probe', content='What was the first code?'))
+        await self.finish(runtime)
+
+        messages, = mind.calls
+        self.assertEqual([message['role'] for message in messages],
+                         ['system', *(['user', 'assistant', 'toolResult'] * len(history)), 'user'])
+        self.assertEqual([frame(message)[0]['content'] for message in messages if message['role'] == 'user'],
+                         [*history, 'What was the first code?'])
+        self.assertLess(len(json.dumps(messages, ensure_ascii=False).encode()), 64 * 1024)
+
     async def test_oversized_frame_fails_only_its_turn(self):
         mind = ScriptedMind(MindDecision('stay_silent', tool_call_id='next'))
         runtime = await self.start(mind, bus=PerceptionBus(text_gap=0))

@@ -66,10 +66,12 @@ if the process is killed before the batch reaches SQLite.
 ## Context
 
 Each request includes the character identity, tool instructions and a bounded
-suffix of journaled dialogue. The runtime reads up to 40 dialogue events, and
-the Pythonâ€“Bun bridge caps each JSONL frame at 64 KiB. Completed tool calls
-and their results travel together. Older dialogue remains in SQLite. The
-runtime has no long-term memory or compaction.
+suffix of journaled dialogue. The runtime reads newest events first and stops
+when the next event would exceed the 63 KiB projection budget. It sends the
+retained events in chronological order, with completed tool calls and their
+results together. The Python-Bun bridge caps each JSONL frame at 64 KiB.
+Older dialogue remains in SQLite. The runtime has no long-term memory or
+compaction.
 
 ## Checks
 

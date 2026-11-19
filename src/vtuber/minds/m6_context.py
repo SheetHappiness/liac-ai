@@ -1,6 +1,6 @@
 """Project committed text dialogue into the Single Mind request."""
 
-from collections.abc import Callable
+from collections.abc import Callable, Iterable
 from datetime import datetime
 
 from vtuber.contracts.context import ContextBudgetExceeded
@@ -20,13 +20,13 @@ OPERATING_PROMPT = (
 )
 
 
-def build_m6_messages(identity: str, dialogue: tuple[Event, ...], *,
+def build_m6_messages(identity: str, newest_first: Iterable[Event], *,
                       lookup: Callable[[str], Event | None] | None = None) -> tuple[dict[str, object], ...]:
     system = {'role': 'system', 'content': f'{identity.strip()}\n\n{OPERATING_PROMPT}'}
     # Leave room in the 64 KiB bridge frame for the JSONL envelope.
     remaining = 63 * 1024 - len(canonical_json(system).encode('utf-8'))
     history = []
-    for event in reversed(dialogue):
+    for event in newest_first:
         if event.kind not in ('user.message.completed', 'character.reply.completed'):
             continue
         group = _project(event, lookup)

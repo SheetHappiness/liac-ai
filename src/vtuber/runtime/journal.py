@@ -2,11 +2,11 @@
 
 import json
 import sqlite3
-from contextlib import contextmanager
+from contextlib import closing, contextmanager
 from dataclasses import asdict, replace
 from pathlib import Path
 from hashlib import sha256
-from collections.abc import Iterator
+from collections.abc import Generator, Iterator
 
 from vtuber.contracts.events import CharacterId, Event, canonical_json, utc_now
 from vtuber.contracts.perception import Perception, PerceptionBatch
@@ -150,10 +150,16 @@ class Journal:
         return tuple(self._decode(row) for row in rows)
 
     def recent_dialogue(self, character_id: CharacterId, limit: int = 20) -> tuple[Event, ...]:
-        rows = self._db.execute("""SELECT * FROM events WHERE character_id=? AND
+        return tuple(reversed(list(self.iter_dialogue_newest_first(character_id, limit=limit))))
+
+    def iter_dialogue_newest_first(self, character_id: CharacterId, *,
+                                  limit: int = -1) -> Generator[Event, None, None]:
+        """Yield dialogue in reverse journal order until exhausted or closed."""
+        with closing(self._db.execute("""SELECT * FROM events WHERE character_id=? AND
             json_extract(content, '$.kind') IN ('user.message.completed', 'character.reply.completed')
-            ORDER BY sequence DESC LIMIT ?""", (character_id, limit)).fetchall()
-        return tuple(self._decode(row) for row in reversed(rows))
+            ORDER BY sequence DESC LIMIT ?""", (character_id, limit))) as rows:
+            for row in rows:
+                yield self._decode(row)
 
     def unfinished_inputs(self, character_id: CharacterId) -> tuple[Event, ...]:
         rows = self._db.execute("""SELECT * FROM events AS input WHERE character_id=?

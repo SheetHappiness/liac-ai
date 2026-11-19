@@ -2,6 +2,7 @@
 
 import asyncio
 import logging
+from contextlib import closing
 from typing import Literal
 
 from vtuber.contracts.events import Event, RuntimeOutput, utc_now
@@ -110,9 +111,8 @@ class SingleMindRuntime:
                 index += 1
                 self._emit(RuntimeOutput('reply.delta', self.character_id, message.turn_id, text, index))
 
-        dialogue = self.journal.recent_dialogue(self.character_id, limit=40)
-        # A future attention pass can annotate the frame at projection time.
-        messages = build_m6_messages(self.identity, dialogue, lookup=self.journal.get)
+        with closing(self.journal.iter_dialogue_newest_first(self.character_id)) as dialogue:
+            messages = build_m6_messages(self.identity, dialogue, lookup=self.journal.get)
         emit_trace(self.trace, 'model.started', batch.batch_id, batch_id=batch.batch_id,
                    turn_id=message.turn_id, started_at=utc_now())
         status = 'failed'
