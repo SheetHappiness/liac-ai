@@ -109,14 +109,17 @@ pre {
 #voice-form, #voice-form label { display: grid; gap: 8px; }
 #voice-form { gap: 14px; }
 #voice-form p { color: var(--muted); }
-#voice-form input {
-    width: 100%; padding: 8px 12px; font: inherit; color: inherit; background: var(--fill);
+#voice-form [hidden] { display: none; }
+#voice-form input, #voice-form select {
+    width: 100%; min-width: 0; padding: 8px 12px; font: inherit; color: inherit; background: var(--fill);
     border: 1px solid var(--line); border-radius: 11px;
 }
 #voice-form label:has(output) { grid-template-columns: 1fr auto; }
 #voice-form output { font-variant-numeric: tabular-nums; color: var(--muted); }
 #voice-form input[type=range] { grid-column: 1 / -1; padding: 0; margin: 0; accent-color: var(--accent); }
 .voice-actions { display: flex; justify-content: flex-end; flex-wrap: wrap; gap: 8px; }
+.voice-catalog-controls { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; }
+#voice-catalog-status { color: var(--muted); font-size: 13px; }
 #voice-preview { margin-right: auto; }
 #voice-form #voice-error { color: var(--error); }
 #voice-save { background: var(--accent); color: var(--on-accent); }

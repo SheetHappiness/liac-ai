@@ -139,6 +139,24 @@ handle('voice-settings', () => {
     const { key, ...settings } = speech;
     return { ...settings, hasKey: Boolean(key) };
 });
+handle('voice-catalog', async draft => {
+    const { key, region } = updateSpeech(speech, { ...speech, key: draft?.key, region: draft?.region });
+    const config = speechSdk.SpeechConfig.fromSubscription(key, region);
+    const catalog = new speechSdk.SpeechSynthesizer(config, null);
+    try {
+        const result = await catalog.getVoicesAsync();
+        if (result.reason !== speechSdk.ResultReason.VoicesListRetrieved) {
+            throw new Error('Azure voice catalog unavailable.');
+        }
+        return result.voices
+            .filter(voice => voice.gender === speechSdk.SynthesisVoiceGender.Female)
+            .map(voice => ({ id: voice.shortName, name: voice.displayName, locale: voice.localeName || voice.locale }));
+    } catch {
+        throw new Error('Azure voice catalog unavailable.');
+    } finally {
+        catalog.close(undefined, () => {});
+    }
+});
 handle('configure-voice', draft => {
     if (quitting) throw new Error('Hub is closing.');
     const next = updateSpeech(speech, draft);

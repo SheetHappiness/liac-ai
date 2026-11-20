@@ -4,6 +4,7 @@ contextBridge.exposeInMainWorld('liac', {
     start: () => ipcRenderer.invoke('hub:start'),
     submit: (id, text) => ipcRenderer.invoke('hub:submit', id, text),
     voiceSettings: () => ipcRenderer.invoke('hub:voice-settings'),
+    voiceCatalog: draft => ipcRenderer.invoke('hub:voice-catalog', draft),
     configureVoice: draft => ipcRenderer.invoke('hub:configure-voice', draft),
     previewVoice: draft => ipcRenderer.invoke('hub:preview-voice', draft),
     synthesize: text => ipcRenderer.invoke('hub:synthesize', text),

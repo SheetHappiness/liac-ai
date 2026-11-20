@@ -43,6 +43,7 @@ let renderPending = false;
 let voiceAvailable = false;
 let audioContext, audioReady;
 let preview;
+let voiceCatalogRequest;
 const voice = new VoicePlayback({
     now: () => performance.now(),
     async synthesize(text) {
@@ -378,14 +379,86 @@ function updateVoiceSliders() {
     ui['voice-rate-value'].value = `${ui['voice-rate'].valueAsNumber.toFixed(2)}×`;
 }
 
-function voiceDraft() {
+function voiceCredentials() {
     return {
         key: ui['voice-key'].value.trim(),
         region: ui['voice-region'].value.trim(),
-        voice: ui['voice-name'].value.trim(),
+    };
+}
+
+function voiceDraft() {
+    return {
+        ...voiceCredentials(),
+        voice: ui['voice-name'].value || ui['voice-custom'].value.trim(),
         pitch: ui['voice-pitch'].valueAsNumber,
         rate: ui['voice-rate'].valueAsNumber,
     };
+}
+
+function updateCustomVoice() {
+    const knownVoice = Boolean(ui['voice-name'].value);
+    ui['voice-custom-field'].hidden = ui['voice-custom'].disabled = knownVoice;
+}
+
+function selectVoice(id) {
+    const select = ui['voice-name'];
+    select.value = id;
+    if (!select.value) select.value = '';
+    ui['voice-custom'].value = select.value ? '' : id;
+    updateCustomVoice();
+}
+
+function filterVoices() {
+    const terms = ui['voice-search'].value.toLocaleLowerCase().trim().split(/\s+/);
+    for (const group of ui['voice-name'].querySelectorAll('optgroup')) {
+        for (const option of group.children) {
+            const text = `${group.label} ${option.label} ${option.value} ${option.dataset.name || ''}`.toLocaleLowerCase();
+            option.hidden = !option.selected && !terms.every(term => text.includes(term));
+        }
+        group.hidden = ![...group.children].some(option => !option.hidden);
+    }
+}
+
+function clearVoiceCatalog() {
+    voiceCatalogRequest = undefined;
+    const id = ui['voice-name'].value || ui['voice-custom'].value;
+    ui['voice-catalog'].replaceChildren();
+    selectVoice(id);
+    filterVoices();
+    ui['voice-catalog-status'].textContent = '';
+    ui['voice-load'].disabled = false;
+}
+
+async function loadVoiceCatalog() {
+    if (!ui['voice-region'].reportValidity() || !ui['voice-key'].reportValidity()) return;
+    const request = voiceCatalogRequest = {};
+    ui['voice-load'].disabled = true;
+    ui['voice-catalog-status'].textContent = 'Loading Azure voices…';
+    try {
+        const catalog = await window.liac.voiceCatalog(voiceCredentials());
+        if (voiceCatalogRequest !== request || !ui['voice-setup'].open) return;
+        const id = ui['voice-name'].value || ui['voice-custom'].value;
+        const group = ui['voice-catalog'];
+        group.replaceChildren();
+        const ids = new Set([...ui['voice-name'].options].map(option => option.value));
+        const voices = new Map(catalog.map(voice => [voice.id, voice]));
+        const options = [...voices.values()].sort((a, b) =>
+            a.locale.localeCompare(b.locale) || a.id.localeCompare(b.id));
+        for (const voice of options) {
+            if (ids.has(voice.id)) continue;
+            const option = new Option(`${voice.locale} · ${voice.id}`, voice.id);
+            option.dataset.name = voice.name;
+            group.append(option);
+        }
+        selectVoice(id);
+        filterVoices();
+        ui['voice-catalog-status'].textContent = `${voices.size} female voices available in this region`;
+    } catch {
+        if (voiceCatalogRequest !== request) return;
+        ui['voice-catalog-status'].textContent = 'Could not load Azure voices. Check the key and region.';
+    } finally {
+        if (voiceCatalogRequest === request) ui['voice-load'].disabled = false;
+    }
 }
 
 function voiceError(message) {
@@ -398,7 +471,9 @@ async function openVoiceSettings() {
     ui['voice-settings'].disabled = true;
     try {
         const settings = await window.liac.voiceSettings();
-        ui['voice-name'].value = settings.voice;
+        ui['voice-search'].value = '';
+        clearVoiceCatalog();
+        selectVoice(settings.voice);
         ui['voice-region'].value = settings.region;
         ui['voice-pitch'].value = settings.pitch;
         ui['voice-rate'].value = settings.rate;
@@ -407,6 +482,7 @@ async function openVoiceSettings() {
         ui['voice-error'].hidden = true;
         updateVoiceSliders();
         ui['voice-setup'].showModal();
+        if (settings.hasKey) void loadVoiceCatalog();
     } catch {
         ui['voice-status'].textContent = 'Could not open voice settings';
     } finally {
@@ -423,6 +499,16 @@ function stopVoicePreview() {
 }
 
 ui['voice-settings'].onclick = openVoiceSettings;
+ui['voice-name'].onchange = () => {
+    updateCustomVoice();
+    filterVoices();
+};
+ui['voice-search'].oninput = filterVoices;
+ui['voice-search'].onkeydown = event => {
+    if (event.key === 'Enter') event.preventDefault();
+};
+ui['voice-load'].onclick = loadVoiceCatalog;
+ui['voice-region'].oninput = ui['voice-key'].oninput = clearVoiceCatalog;
 ui['voice-pitch'].oninput = ui['voice-rate'].oninput = updateVoiceSliders;
 ui['voice-toggle'].onchange = () => {
     if (ui['voice-toggle'].checked && !voiceAvailable) {
@@ -442,6 +528,7 @@ ui['voice-setup'].oncancel = event => {
 };
 ui['voice-setup'].onclose = () => {
     ui['voice-key'].value = '';
+    voiceCatalogRequest = undefined;
     stopVoicePreview();
 };
 ui['voice-preview'].onclick = async () => {

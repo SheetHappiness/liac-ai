@@ -5,7 +5,7 @@ const { parseEnv } = require('node:util');
 
 const validKey = /^[A-Za-z0-9_-]{1,256}$/;
 const validRegion = /^[a-z0-9]{1,32}$/i;
-const validVoice = /^[a-z0-9-]{1,100}$/i;
+const validVoice = /^[\p{L}\p{M}\p{N}:._-]{1,100}$/u;
 
 function loadSpeech(file, env) {
     let saved = {};

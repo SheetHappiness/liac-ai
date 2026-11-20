@@ -22,13 +22,22 @@ test('Azure preferences and key survive restart and drive escaped SSML', t => {
     saveSpeech(file, settings);
     const restored = loadSpeech(file, { SPEECH_KEY: 'ignored-env-key' });
     assert.deepEqual(restored, settings);
-    const changed = updateSpeech(restored, { ...restored, key: '', pitch: 20 });
-    saveSpeech(file, changed);
-    assert.deepEqual(loadSpeech(file, {}), { ...restored, pitch: 20 });
     assert.throws(() => updateSpeech(restored, { ...restored, voice: '"><break/>' }));
     assert.throws(() => updateSpeech(restored, { ...restored, key: 'abc\nSPEECH_KEY=bad' }));
-    assert.match(speechSsml('A & B <break/>', changed),
-        /xml:lang="uk-UA"><voice name="uk-UA-PolinaNeural"><prosody pitch="\+20%" rate="1.25">A &amp; B &lt;break\/&gt;/);
+    assert.match(speechSsml('A & B <break/>', restored),
+        /xml:lang="uk-UA"><voice name="uk-UA-PolinaNeural"><prosody pitch="-15%" rate="1.25">A &amp; B &lt;break\/&gt;/);
+    const voice = 'en-US-Dana:DragonHDOmniLatestNeural';
+    const changed = updateSpeech(restored, { ...restored, key: '', voice, pitch: 20 });
+    saveSpeech(file, changed);
+    assert.deepEqual(loadSpeech(file, {}), { ...restored, voice, pitch: 20 });
+    assert.match(speechSsml('Hello.', changed),
+        /xml:lang="en-US"><voice name="en-US-Dana:DragonHDOmniLatestNeural"><prosody pitch="\+20%" rate="1.25">/);
+    for (const id of ['hu-HU-Réka:MAI-Voice-2', 'en-US-Iris:MAI-Voice-2.1-Flash']) {
+        const catalogVoice = updateSpeech(changed, { ...changed, key: '', voice: id });
+        saveSpeech(file, catalogVoice);
+        assert.equal(loadSpeech(file, {}).voice, id);
+        assert.ok(speechSsml('Hello.', catalogVoice).includes(`<voice name="${id}">`));
+    }
 });
 
 const tick = () => new Promise(resolve => setImmediate(resolve));

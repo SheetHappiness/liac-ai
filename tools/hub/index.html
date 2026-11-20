@@ -79,16 +79,39 @@
   <dialog id="voice-setup" aria-labelledby="voice-title">
     <form id="voice-form" autocomplete="off">
       <h2 id="voice-title">Voice settings</h2>
-      <label>Azure voice <input id="voice-name" list="azure-voices" maxlength="100" required autofocus></label>
-      <datalist id="azure-voices">
-        <option value="en-US-AshleyNeural">Ashley · English (US)</option>
-        <option value="en-US-AriaNeural">Aria · English (US)</option>
-        <option value="en-US-JennyNeural">Jenny · English (US)</option>
-        <option value="en-US-AvaMultilingualNeural">Ava · Multilingual</option>
-        <option value="en-US-GuyNeural">Guy · English (US)</option>
-        <option value="en-GB-SoniaNeural">Sonia · English (UK)</option>
-        <option value="uk-UA-PolinaNeural">Polina · Ukrainian</option>
-      </datalist>
+      <label>Search voices
+        <input id="voice-search" type="search" placeholder="Name, language, or locale" autofocus>
+      </label>
+      <label>Azure voice
+        <select id="voice-name">
+          <optgroup label="English (US)">
+            <option value="en-US-MichelleNeural">Michelle</option>
+            <option value="en-US-EvelynMultilingualNeural">Evelyn Multilingual</option>
+            <option value="en-US-AshleyNeural" selected>Ashley</option>
+            <option value="en-US-AnaNeural">Ana</option>
+            <option value="en-US-AmberNeural">Amber</option>
+            <option value="en-US-NancyNeural">Nancy</option>
+            <option value="en-US-SaraNeural">Sara</option>
+            <option value="en-US-LunaNeural">Luna</option>
+            <option value="en-US-FableTurboMultilingualNeural">Fable Turbo Multilingual</option>
+            <option value="en-US-Phoebe:DragonHDOmniLatestNeural">Phoebe Dragon HD Omni Latest (Preview)</option>
+            <option value="en-US-Dana:DragonHDOmniLatestNeural">Dana Dragon HD Omni Latest (Preview)</option>
+            <option value="en-US-Phoebe:DragonHDLatestNeural">Phoebe Dragon HD Latest</option>
+            <option value="en-US-Bree:DragonHDLatestNeural">Bree Dragon HD Latest</option>
+          </optgroup>
+          <optgroup label="More voices">
+            <option value="en-US-AriaNeural">Aria · English (US)</option>
+            <option value="en-US-JennyNeural">Jenny · English (US)</option>
+            <option value="en-US-AvaMultilingualNeural">Ava · Multilingual</option>
+            <option value="en-US-GuyNeural">Guy · English (US)</option>
+            <option value="en-GB-SoniaNeural">Sonia · English (UK)</option>
+            <option value="uk-UA-PolinaNeural">Polina · Ukrainian</option>
+          </optgroup>
+          <optgroup id="voice-catalog" label="Azure female voices" hidden></optgroup>
+          <option value="">Custom Azure voice…</option>
+        </select>
+      </label>
+      <label id="voice-custom-field" hidden>Azure Voice ID <input id="voice-custom" maxlength="100" disabled required></label>
       <label>Pitch <output id="voice-pitch-value"></output>
         <input id="voice-pitch" type="range" min="-50" max="50" step="1">
       </label>
@@ -98,6 +121,10 @@
       <label>Azure region <input id="voice-region" maxlength="32" required></label>
       <label>Azure Speech key <input id="voice-key" type="password" maxlength="256" aria-describedby="voice-key-note"></label>
       <p id="voice-key-note">The key is saved on this computer so you can reuse it.</p>
+      <div class="voice-catalog-controls">
+        <button type="button" id="voice-load">Load voices</button>
+        <span id="voice-catalog-status" role="status"></span>
+      </div>
       <p id="voice-error" role="alert" hidden></p>
       <div class="voice-actions">
         <button type="button" id="voice-preview">Preview</button>

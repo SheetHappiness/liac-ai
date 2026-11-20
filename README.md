@@ -35,9 +35,11 @@ override executable paths. Hub also checks `.data/hub/bin` for a local Bun.
 ### Azure speech in Hub
 
 Open **Voice settings** in Chat and enter your Azure Speech key once. The
-region defaults to `eastus` and must match your Azure resource. Choose a
-suggested voice or type an Azure voice ID, adjust pitch and rate, and use
-**Preview** to hear the draft. **Save** applies the settings to future replies
+region defaults to `eastus` and must match your Azure resource. With a saved
+key, Hub loads the region's female voice catalog when you open the menu.
+Use **Load voices** after entering a new key or changing the region. Search
+by name, language, or locale, or enter a custom Azure voice ID. Adjust pitch
+and rate, then use **Preview** to hear the draft. **Save** applies settings to future replies
 and stores them with the key in the local, Git-ignored `.data/hub/.env` file.
 The defaults are `en-US-AshleyNeural`, pitch `+30%`, and rate `1.0`.
 Hub uses `SPEECH_KEY`, `SPEECH_REGION`, and `LIAC_TTS_VOICE` from the process
