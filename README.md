@@ -9,9 +9,9 @@ is committed.
 ## Liac Hub
 
 The Electron app starts the real GPT-6 Luna runtime at low reasoning. The
-right-hand chat treats typed messages as final STT transcripts and displays
-committed speech. The simulator settles a batch after
-1.2 seconds without another submitted transcript, with no time ceiling for
+right-hand chat treats typed messages as final STT transcripts and streams
+Luna's speech. The simulator settles a batch after
+800 milliseconds without another submitted transcript, with no time ceiling for
 the burst. On the left, Live shows perception,
 batching, admission, model timing and actions. Select an event or chat message
 to inspect its turn. Replay opens earlier runs while the current runtime stays
@@ -46,7 +46,8 @@ Hub uses `SPEECH_KEY`, `SPEECH_REGION`, and `LIAC_TTS_VOICE` from the process
 environment when the corresponding local values are missing.
 Hub displays reply text as Luna generates it. Electron main also feeds the
 same fragments to Azure Speech TextStream and sends 24 kHz PCM chunks back
-for immediate playback. The live text and audio can begin before the reply
+for immediate playback. With Voice enabled, Hub opens the Azure connection
+as soon as a transcript is submitted. The live text and audio can begin before the reply
 is committed. Submitting another transcript interrupts the current audio.
 Replay displays committed text.
 Use **Voice** in Chat to mute speech immediately or enable it for the next
@@ -54,8 +55,9 @@ transcript. Without Azure configuration, Hub works as a text chat.
 
 Select a spoken turn in Live to see the estimated time to first audio output,
 measured from the latest transcript in the batch and from the first speech
-preview. These are local Web Audio estimates. Hub does not save audio or timing
-measurements to the run.
+preview. The inspector also shows the time from first speech preview to first
+PCM arrival in the renderer and the estimated time from there to audio output.
+Hub does not save audio or these timing measurements to the run.
 
 Each Hub run stores chat and diagnostic events under `.data/hub/runs/`.
 **Record model context** is off on startup. Enabling it saves the exact

@@ -152,7 +152,7 @@ async def run_hub(bun_command: str, resume: Path | None = None) -> bool:
                     flush_journal()
 
             identity = files('vtuber.minds').joinpath('character.md').read_text(encoding='utf-8')
-            bus = PerceptionBus(live_gap=1.2, max_window=None, trace=trace)
+            bus = PerceptionBus(live_gap=0.8, max_window=None, trace=trace)
             runtime = SingleMindRuntime(CHARACTER, journal, mind, output, identity=identity,
                                         bus=bus, trace=trace, budget=budget, summarize=handoff.summarize,
                                         model_metrics=mind.trace_metrics)

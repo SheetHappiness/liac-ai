@@ -16,11 +16,9 @@ PERCEPTION_FRAME = '[PERCEPTIONS]\n'
 
 OPERATING_PROMPT = (
     'Choose one tool per step. End the turn with speak or stay_silent. '
-    'When the user appears to be mid-thought, let them continue without speaking. '
     'If the latest input continues an earlier fragment, interpret them together. '
-    'Use speak for a short reply when a response fits the conversation, '
-    'especially after a complete question or request. '
-    'You may choose stay_silent on consecutive turns.'
+    "You're part of the stream. Speak when you feel like joining in, "
+    'and feel free to stay silent while the moment unfolds.'
 )
 
 TURN_TOOLS = files('vtuber.minds').joinpath('turn_tools.json').read_text(encoding='utf-8')

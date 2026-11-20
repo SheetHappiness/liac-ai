@@ -56,14 +56,24 @@ function playSpeech(frame) {
     if (turn?.id !== frame.turn_id) return;
     try {
         if (frame.type === 'voice_failed') throw new Error('Azure synthesis failed');
-        const onStart = turn.hasAudio ? undefined : startedAt => {
+        if (turn.firstPcmAt !== undefined) {
+            playback.push(frame.pcm, frame.sample_rate);
+            return;
+        }
+        const firstPcmAt = turn.firstPcmAt = performance.now();
+        const latency = {
+            previewToPcmMs: turn.previewAt == null ? null : Math.round(firstPcmAt - turn.previewAt),
+        };
+        live.latency.set(turn.id, latency);
+        schedule();
+        playback.push(frame.pcm, frame.sample_rate, startedAt => {
             if (speechTurn !== turn) return;
             const elapsed = time => time == null ? null : Math.max(0, Math.round(startedAt - time));
-            live.latency.set(turn.id, { transcriptMs: elapsed(turn.transcriptAt), previewMs: elapsed(turn.previewAt) });
+            latency.transcriptMs = elapsed(turn.transcriptAt);
+            latency.previewMs = elapsed(turn.previewAt);
+            latency.pcmToOutputMs = elapsed(firstPcmAt);
             schedule();
-        };
-        playback.push(frame.pcm, frame.sample_rate, onStart);
-        turn.hasAudio = true;
+        });
     } catch {
         clearVoice(frame.type !== 'voice_failed');
         ui['voice-status'].textContent = 'TTS unavailable · Text chat active';
@@ -195,6 +205,10 @@ function renderDetails(view) {
         `Transcript to audio output · ${latency.transcriptMs.toLocaleString()} ms (estimated)`));
     if (latency?.previewMs != null) content.push(node('p',
         `First speech preview to audio output · ${latency.previewMs.toLocaleString()} ms (estimated)`));
+    if (latency?.previewToPcmMs != null) content.push(node('p',
+        `First speech preview to first PCM · ${latency.previewToPcmMs.toLocaleString()} ms`));
+    if (latency?.pcmToOutputMs != null) content.push(node('p',
+        `First PCM to audio output · ${latency.pcmToOutputMs.toLocaleString()} ms (estimated)`));
     for (const input of inputs) {
         content.push(node('h3', `${input.source} · ${input.kind} · ${input.delivery}`),
             node('pre', input.content));

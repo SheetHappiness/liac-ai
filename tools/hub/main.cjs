@@ -167,7 +167,16 @@ handle('submit', (id, text, speak) => {
     if (synthesis) closeSynthesizer();
     speechTurn = voiceInput = undefined;
     command({ type: 'submit_transcript', id, text });
-    if (speak && speech.key) voiceInput = 'hub_' + id;
+    if (speak && speech.key) {
+        voiceInput = 'hub_' + id;
+        try {
+            const sdk = speechSynthesizer(speech, true);
+            connection.socket ??= speechSdk.Connection.fromSynthesizer(sdk);
+            connection.socket.openConnection(undefined, () => {});
+        } catch {
+            // Synthesis can still connect when the first speech fragment arrives.
+        }
+    }
 });
 handle('voice-settings', () => {
     const { key, ...settings } = speech;

@@ -76,8 +76,18 @@ test('PCM starts from the first chunk, preserves order and stops queued audio', 
 test('main streams Luna deltas directly to Azure and forwards only current PCM', () => {
     const frames = [];
     const synthesizers = [];
+    const handlers = new Map();
     const require = createRequire(import.meta.url);
     const sdk = {
+        Connection: {
+            fromSynthesizer: synth => {
+                synth.connectionWrappers = (synth.connectionWrappers || 0) + 1;
+                return { openConnection: (_ready, failed) => {
+                    synth.opens = (synth.opens || 0) + 1;
+                    failed('test connection failure');
+                } };
+            },
+        },
         SpeechConfig: { fromEndpoint: (url, key) => ({ url, key }) },
         SpeechSynthesisOutputFormat: { Raw24Khz16BitMonoPcm: 'pcm' },
         SpeechSynthesisRequestInputType: { TextStream: 3 },
@@ -97,31 +107,45 @@ test('main streams Luna deltas directly to Azure and forwards only current PCM',
     };
     const mocks = {
         electron: { app: { requestSingleInstanceLock: () => false, quit() {}, on() {} },
-            ipcMain: { handle() {} } },
+            ipcMain: { handle: (name, handler) => handlers.set(name, handler) } },
         'microsoft-cognitiveservices-speech-sdk': sdk,
         './speech-settings.cjs': { loadSpeech: () => ({ key: 'test-key', region: 'germanywestcentral',
             voice: 'en-GB-MaisieNeural', pitch: -10, rate: 1.05 }), voiceLocale },
     };
     const source = readFileSync(new URL('./main.cjs', import.meta.url), 'utf8');
+    const sender = { mainFrame: {}, send: (_channel, _stream, frame) => frames.push(frame) };
     const main = runInNewContext(source + `
         window = testWindow;
-        ({ streamSpeech, cancelSynthesis, selectInput: id => { voiceInput = id; } });
+        ready = true;
+        live = { stdin: { writable: true, write() {} } };
+        ({ streamSpeech, cancelSynthesis });
     `, {
         require: name => mocks[name] ?? require(name), __dirname: tmpdir(),
         process: { env: {}, platform: process.platform }, URL, setTimeout, clearTimeout,
-        testWindow: { isDestroyed: () => false, webContents: { send: (_channel, _stream, frame) => frames.push(frame) } },
+        testWindow: { isDestroyed: () => false, webContents: sender },
     });
-    const start = id => {
-        main.selectInput(id);
+    let input = 0;
+    const submit = speak => {
+        const id = String(++input).padStart(36, '0');
+        const event = { sender, senderFrame: sender.mainFrame };
+        handlers.get('hub:submit')(event, id, 'Test transcript', speak);
+        return 'hub_' + id;
+    };
+    const start = (id, perceptionId = submit(true)) => {
         main.streamSpeech({ type: 'journal', event: { kind: 'user.message.completed', turn_id: id,
-            payload: { perception_ids: [id] } } });
+            payload: { perception_ids: [perceptionId] } } });
     };
     const delta = (id, text) => main.streamSpeech({ type: 'preview', turn_id: id, text });
     const emit = synth => synth.synthesizing?.(null, { result: { audioData: new ArrayBuffer(2) } });
     try {
-        start('old');
-        delta('old', 'Hel');
+        submit(false);
+        assert.equal(synthesizers.length, 0);
+        const firstInput = submit(true);
         const old = synthesizers[0];
+        assert.equal(old?.opens, 1);
+        assert.equal(old.request, undefined);
+        start('old', firstInput);
+        delta('old', 'Hel');
         const staleCallback = old.synthesizing;
         assert.match(old.config.url.href, /germanywestcentral.*websocket\/v2/);
         assert.equal(old.config.speechSynthesisVoiceName, 'en-GB-MaisieNeural');
@@ -150,6 +174,7 @@ test('main streams Luna deltas directly to Azure and forwards only current PCM',
         main.streamSpeech({ type: 'journal', event: { kind: 'character.reply.completed', turn_id: 'silent',
             payload: { action: 'stay_silent', text: '' } } });
         assert.equal(synthesizers.length, 2);
+        assert.equal(current.connectionWrappers, 1);
         start('error');
         delta('error', 'Another reply');
         current.done({ reason: 'failed' });
