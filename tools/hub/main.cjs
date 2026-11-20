@@ -5,20 +5,49 @@ const { readdir, stat } = require('node:fs/promises');
 const path = require('node:path');
 const { createInterface } = require('node:readline');
 const speechSdk = require('microsoft-cognitiveservices-speech-sdk');
-const { loadSpeech, updateSpeech, saveSpeech, speechSsml } = require('./speech-settings.cjs');
+const { loadSpeech, updateSpeech, saveSpeech, speechSsml, voiceLocale } = require('./speech-settings.cjs');
 
 const { SPEECH_KEY, SPEECH_REGION, LIAC_TTS_VOICE, ...workerEnv } = process.env;
 const root = path.resolve(__dirname, '../..');
 const speechFile = path.join(root, '.data/hub/.env');
 let speech = loadSpeech(speechFile, { SPEECH_KEY, SPEECH_REGION, LIAC_TTS_VOICE });
 let synthesizer, connection, synthesis;
+let voiceInput, speechTurn;
+const pcmSampleRate = 24_000;
 
-function cancelSynthesis() {
+function closeSynthesizer() {
     synthesis?.(null);
     const previous = synthesizer;
     synthesizer = undefined;
     connection = undefined;
     previous?.close(undefined, () => {});
+}
+
+function cancelSynthesis() {
+    voiceInput = speechTurn = undefined;
+    closeSynthesizer();
+}
+
+function speechSynthesizer(settings, streaming) {
+    if (connection && (connection.key !== settings.key || connection.region !== settings.region ||
+        connection.streaming !== streaming || (streaming && connection.voice !== settings.voice))) {
+        closeSynthesizer();
+    }
+    if (!synthesizer) {
+        const config = streaming
+            ? speechSdk.SpeechConfig.fromEndpoint(new URL(
+                `wss://${settings.region}.tts.speech.microsoft.com/cognitiveservices/websocket/v2`), settings.key)
+            : speechSdk.SpeechConfig.fromSubscription(settings.key, settings.region);
+        if (streaming) {
+            config.speechSynthesisVoiceName = settings.voice;
+            config.speechSynthesisLanguage = voiceLocale(settings.voice);
+        }
+        config.speechSynthesisOutputFormat = streaming ? speechSdk.SpeechSynthesisOutputFormat.Raw24Khz16BitMonoPcm
+            : speechSdk.SpeechSynthesisOutputFormat.Riff24Khz16BitMonoPcm;
+        synthesizer = new speechSdk.SpeechSynthesizer(config, null);
+        connection = { ...settings, streaming };
+    }
+    return synthesizer;
 }
 
 const runRoot = path.join(root, '.data/hub/runs');
@@ -80,6 +109,7 @@ function start(resume) {
         }
         if (!quitting) deliver('live', frame.type === 'status' && frame.state === 'ready'
             ? { ...frame, voice_enabled: Boolean(speech.key) } : frame);
+        if (!quitting && !switching) streamSpeech(frame);
     }, code => {
         cancelSynthesis();
         live = undefined;
@@ -128,12 +158,16 @@ function handle(name, fn) {
 handle('start', () => {
     if (!switching) start(resumeFrom);
 });
-handle('submit', (id, text) => {
+handle('submit', (id, text, speak) => {
     if (typeof id !== 'string' || !/^[a-f0-9-]{36}$/.test(id) ||
-        typeof text !== 'string' || !text.trim() || text.length > 8000 || !text.isWellFormed()) {
+        typeof text !== 'string' || !text.trim() || text.length > 8000 || !text.isWellFormed() ||
+        typeof speak !== 'boolean') {
         throw new Error('Enter a valid transcript of 1 to 8,000 characters.');
     }
+    if (synthesis) closeSynthesizer();
+    speechTurn = voiceInput = undefined;
     command({ type: 'submit_transcript', id, text });
+    if (speak && speech.key) voiceInput = 'hub_' + id;
 });
 handle('voice-settings', () => {
     const { key, ...settings } = speech;
@@ -166,17 +200,12 @@ handle('configure-voice', draft => {
     speech = next;
 });
 handle('preview-voice', draft => synthesize('Hi, this is how I sound with these settings.', updateSpeech(speech, draft)));
-handle('synthesize', text => {
-    if (!ready || switching || typeof text !== 'string' ||
-        !text.trim() || text.length > 16_384 || !text.isWellFormed()) return null;
-    return synthesize(text, speech);
-});
 
 function synthesize(text, settings) {
     if (!settings.key || quitting || synthesis) return null;
-    if (connection && (connection.key !== settings.key || connection.region !== settings.region)) {
-        cancelSynthesis();
-    }
+    let sdk;
+    try { sdk = speechSynthesizer(settings, false); }
+    catch { return null; }
     return new Promise(resolve => {
         const finish = audio => {
             clearTimeout(timeout);
@@ -187,14 +216,8 @@ function synthesize(text, settings) {
         const timeout = setTimeout(cancelSynthesis, 12_000);
         synthesis = finish;
         try {
-            if (!synthesizer) {
-                const config = speechSdk.SpeechConfig.fromSubscription(settings.key, settings.region);
-                config.speechSynthesisOutputFormat = speechSdk.SpeechSynthesisOutputFormat.Riff24Khz16BitMonoPcm;
-                synthesizer = new speechSdk.SpeechSynthesizer(config, null);
-                connection = settings;
-            }
             const failed = () => { if (synthesis === finish) cancelSynthesis(); };
-            synthesizer.speakSsmlAsync(speechSsml(text, settings), result => {
+            sdk.speakSsmlAsync(speechSsml(text, settings), result => {
                 if (result.reason === speechSdk.ResultReason.SynthesizingAudioCompleted && result.audioData?.byteLength) {
                     finish(result.audioData);
                 } else failed();
@@ -203,6 +226,83 @@ function synthesize(text, settings) {
             cancelSynthesis();
         }
     });
+}
+
+function openSpeechStream(turn) {
+    const sdk = speechSynthesizer(speech, true);
+    const request = new speechSdk.SpeechSynthesisRequest(speechSdk.SpeechSynthesisRequestInputType.TextStream);
+    request.pitch = `${speech.pitch >= 0 ? '+' : ''}${speech.pitch}%`;
+    const rate = Math.round((speech.rate - 1) * 100);
+    request.rate = `${rate >= 0 ? '+' : ''}${rate}%`;
+    let received = false;
+    const timeout = setTimeout(() => finish(false), 12_000);
+    const frame = (type, data) => deliver('live', { type, turn_id: turn.id, ...data });
+    const finish = ok => {
+        if (synthesis !== finish) return;
+        synthesis = undefined;
+        clearTimeout(timeout);
+        sdk.synthesizing = undefined;
+        if (speechTurn === turn) speechTurn = undefined;
+        if (ok === false) {
+            closeSynthesizer();
+            frame('voice_failed');
+        }
+    };
+    synthesis = finish;
+    turn.refresh = () => timeout.refresh();
+    sdk.synthesizing = (_sender, { result }) => {
+        if (synthesis !== finish || !result.audioData?.byteLength) return;
+        received = true;
+        timeout.refresh();
+        frame('voice_pcm', { sample_rate: pcmSampleRate, pcm: result.audioData });
+    };
+    sdk.speakAsync(request, result => {
+        finish(turn.closed && received && result.reason === speechSdk.ResultReason.SynthesizingAudioCompleted);
+    }, () => finish(false));
+    return request.inputStream;
+}
+
+function streamSpeech(frame) {
+    if (frame.type === 'ack' && !frame.accepted && voiceInput === 'hub_' + frame.id) voiceInput = undefined;
+    const event = frame.event;
+    if (frame.type === 'journal' && event.kind === 'user.message.completed') {
+        if (voiceInput && event.payload.perception_ids?.includes(voiceInput)) {
+            voiceInput = undefined;
+            speechTurn = { id: event.turn_id, text: '', input: null, closed: false };
+        }
+        return;
+    }
+    const turn = speechTurn;
+    if (!turn || turn.closed) return;
+    const delta = frame.type === 'preview' && frame.turn_id === turn.id;
+    const terminal = frame.type === 'journal' && event.turn_id === turn.id &&
+        event.kind.startsWith('character.reply.') && event.kind !== 'character.reply.started';
+    if (!delta && !terminal) return;
+    const final = terminal && event.kind === 'character.reply.completed' && event.payload.action === 'speak'
+        ? event.payload.text : null;
+    if (terminal && (!final || !final.startsWith(turn.text))) {
+        speechTurn = undefined;
+        if (turn.input) closeSynthesizer();
+        return;
+    }
+    const text = delta ? frame.text : final.slice(turn.text.length);
+    try {
+        if (text) {
+            if (!turn.input && synthesis) closeSynthesizer();
+            turn.input ??= openSpeechStream(turn);
+            turn.input.write(text);
+            turn.text += text;
+            turn.refresh();
+        }
+        if (terminal) {
+            turn.closed = true;
+            turn.input?.close();
+            turn.refresh?.();
+        }
+    } catch {
+        cancelSynthesis();
+        deliver('live', { type: 'voice_failed', turn_id: turn.id });
+    }
 }
 handle('cancel-voice', cancelSynthesis);
 handle('context', enabled => {

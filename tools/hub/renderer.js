@@ -1,4 +1,4 @@
-import { VoicePlayback, playAudio } from './voice.mjs';
+import { PcmPlayback } from './voice.mjs';
 
 const ui = Object.fromEntries([...document.querySelectorAll('[id]')].map(node => [node.id, node]));
 const names = {
@@ -41,24 +41,34 @@ let replayLoaded = false;
 let switching = false;
 let renderPending = false;
 let voiceAvailable = false;
-let audioContext, audioReady;
+let audioContext, playback, voiceInput, speechTurn;
 let preview;
 let voiceCatalogRequest;
-const voice = new VoicePlayback({
-    now: () => performance.now(),
-    async synthesize(text) {
-        if (!audioReady) return null;
-        const [, wav] = await Promise.all([audioReady, window.liac.synthesize(text)]);
-        return wav && audioContext.decodeAudioData(wav);
-    },
-    cancelSynthesis: () => { window.liac.cancelVoice().catch(() => {}); },
-    play: (audio, onStart, onEnd) => playAudio(audioContext, audio, onStart, onEnd),
-    onLatency(id, result) {
-        live.latency.set(id, result);
-        schedule();
-    },
-    onError() { ui['voice-status'].textContent = 'TTS unavailable · Text chat active'; },
-});
+
+function clearVoice(cancel = true) {
+    voiceInput = speechTurn = undefined;
+    playback?.clear();
+    if (cancel) window.liac.cancelVoice().catch(() => {});
+}
+
+function playSpeech(frame) {
+    const turn = speechTurn;
+    if (turn?.id !== frame.turn_id) return;
+    try {
+        if (frame.type === 'voice_failed') throw new Error('Azure synthesis failed');
+        const onStart = turn.hasAudio ? undefined : startedAt => {
+            if (speechTurn !== turn) return;
+            const elapsed = time => time == null ? null : Math.max(0, Math.round(startedAt - time));
+            live.latency.set(turn.id, { transcriptMs: elapsed(turn.transcriptAt), previewMs: elapsed(turn.previewAt) });
+            schedule();
+        };
+        playback.push(frame.pcm, frame.sample_rate, onStart);
+        turn.hasAudio = true;
+    } catch {
+        clearVoice(frame.type !== 'voice_failed');
+        ui['voice-status'].textContent = 'TTS unavailable · Text chat active';
+    }
+}
 
 function voiceEnabled() {
     return state === 'ready' && voiceAvailable && ui['voice-toggle'].checked;
@@ -197,9 +207,15 @@ function renderDetails(view) {
 }
 
 function renderChat(view) {
-    if (!view.chatDirty) return;
-    view.chatDirty = false;
+    const draft = view.draft;
+    if (!view.chatDirty && !draft) return;
     const atBottom = ui.messages.scrollHeight - ui.messages.scrollTop - ui.messages.clientHeight < 40;
+    if (!view.chatDirty && draft.button?.isConnected) {
+        draft.button.lastChild.data = view.previews.get(draft.id);
+        if (atBottom) ui.messages.scrollTop = ui.messages.scrollHeight;
+        return;
+    }
+    view.chatDirty = false;
     const focused = document.activeElement.dataset?.eventId;
     const items = view.messages.map(event => {
         const input = event.kind === 'user.message.completed';
@@ -214,6 +230,14 @@ function renderChat(view) {
         button.onclick = () => selectTurn(event.turn_id);
         return button;
     });
+    if (draft) {
+        draft.button ??= node('button', null, 'bubble');
+        draft.button.replaceChildren(node('strong', 'Luna · TTS'),
+            document.createTextNode(view.previews.get(draft.id)));
+        draft.button.dataset.eventId = draft.id;
+        draft.button.onclick = () => selectTurn(draft.id);
+        items.push(draft.button);
+    }
     if (!items.length) items.push(node('p', isReplay ? 'No messages in this run.' :
         'Send a transcript to start the conversation.', 'empty'));
     ui.messages.replaceChildren(...items);
@@ -246,7 +270,7 @@ function render() {
 function receive(stream, frame) {
     if (stream !== 'live' && (stream !== token || !isReplay)) return;
     if (stream === 'live' && frame.type === 'status' && frame.resuming) {
-        voice.clear();
+        clearVoice();
         live = session();
         isReplay = false;
         token++;
@@ -267,7 +291,11 @@ function receive(stream, frame) {
                 voiceAvailable = Boolean(frame.voice_enabled);
             }
             updateVoiceStatus();
-            if (state !== 'ready') voice.clear();
+            if (state !== 'ready') {
+                clearVoice();
+                view.draft = undefined;
+                view.chatDirty = true;
+            }
             if (state === 'error') {
                 pending.clear();
             }
@@ -277,7 +305,7 @@ function receive(stream, frame) {
     } else if (frame.type === 'ack' && !frame.accepted) {
         const text = pending.get(frame.id);
         pending.delete(frame.id);
-        if (stream === 'live') voice.reject('hub_' + frame.id);
+        if (stream === 'live' && voiceInput?.id === 'hub_' + frame.id) voiceInput = undefined;
         if (!ui.transcript.value && text) ui.transcript.value = text;
         notice = frame.message || 'Transcript rejected.';
         inputError = true;
@@ -290,7 +318,11 @@ function receive(stream, frame) {
         }
     } else if (frame.type === 'preview') {
         view.previews.set(frame.turn_id, (view.previews.get(frame.turn_id) || '') + frame.text);
-        if (stream === 'live' && !isReplay) voice.delta(frame.turn_id, frame.text);
+        if (view.draft?.id !== frame.turn_id) view.draft = { id: frame.turn_id };
+        if (stream === 'live' && speechTurn?.id === frame.turn_id) speechTurn.previewAt ??= performance.now();
+    } else if (frame.type === 'voice_pcm' || frame.type === 'voice_failed') {
+        if (stream === 'live' && !isReplay && voiceEnabled()) playSpeech(frame);
+        return;
     } else if (frame.type === 'journal') {
         const event = frame.event;
         if (event.kind === 'perception.received') {
@@ -299,12 +331,18 @@ function receive(stream, frame) {
         } else if (event.kind !== 'character.reply.started') {
             if (event.kind === 'user.message.completed') {
                 view.turns.set(event.turn_id, event.payload);
-                if (stream === 'live' && !isReplay && voiceEnabled()) {
-                    voice.begin(event.turn_id, event.payload.perception_ids || []);
+                if (stream === 'live' && !isReplay && voiceInput &&
+                    event.payload.perception_ids?.includes(voiceInput.id)) {
+                    speechTurn = { id: event.turn_id, transcriptAt: voiceInput.at };
+                    voiceInput = undefined;
                 }
-            } else if (stream === 'live' && !isReplay && event.kind.startsWith('character.reply.')) {
-                const spoken = event.kind === 'character.reply.completed' && event.payload.action === 'speak';
-                voice.finish(event.turn_id, spoken ? event.payload.text : null);
+            } else if (event.kind.startsWith('character.reply.')) {
+                if (view.draft?.id === event.turn_id) view.draft = undefined;
+                if (stream === 'live' && speechTurn?.id === event.turn_id) {
+                    const prefix = view.previews.get(event.turn_id) || '';
+                    const spoken = event.kind === 'character.reply.completed' && event.payload.action === 'speak';
+                    if (!spoken || !event.payload.text.startsWith(prefix)) clearVoice(false);
+                }
             }
             view.messages.push(event);
             view.chatDirty = true;
@@ -331,7 +369,7 @@ async function loadReplay() {
 
 ui['replay-tab'].onclick = async () => {
     if (isReplay || switching) return;
-    voice.clear();
+    clearVoice();
     isReplay = true;
     replayLoaded = false;
     recorded = session();
@@ -517,8 +555,7 @@ ui['voice-toggle'].onchange = () => {
         return;
     }
     if (!ui['voice-toggle'].checked) {
-        voice.clear();
-        audioReady = undefined;
+        clearVoice();
     }
     updateVoiceStatus();
 };
@@ -534,7 +571,7 @@ ui['voice-setup'].onclose = () => {
 ui['voice-preview'].onclick = async () => {
     if (!ui['voice-form'].reportValidity()) return;
     stopVoicePreview();
-    voice.clear();
+    clearVoice();
     ui['voice-error'].hidden = true;
     ui['voice-preview'].disabled = true;
     const request = preview = {};
@@ -569,7 +606,7 @@ ui['voice-form'].onsubmit = async event => {
     ui['voice-error'].hidden = true;
     try {
         await window.liac.configureVoice(voiceDraft());
-        voice.clear();
+        clearVoice(false);
         if (!voiceAvailable) ui['voice-toggle'].checked = true;
         voiceAvailable = true;
         ui['voice-setup'].close();
@@ -607,20 +644,20 @@ ui.composer.onsubmit = async event => {
     const text = ui.transcript.value.trim();
     if (!text || state !== 'ready' || isReplay) return;
     const id = crypto.randomUUID();
+    clearVoice(false);
     if (voiceEnabled()) {
-        voice.submit('hub_' + id);
         updateVoiceStatus();
         try {
             audioContext ??= new AudioContext();
-            const resume = audioContext.resume();
-            audioReady = resume;
-            resume.catch(() => {
-                if (audioReady === resume && voiceEnabled() && !isReplay) {
+            playback ??= new PcmPlayback(audioContext);
+            const input = voiceInput = { id: 'hub_' + id, at: performance.now() };
+            audioContext.resume().catch(() => {
+                if (voiceInput === input || speechTurn?.transcriptAt === input.at) {
+                    clearVoice();
                     ui['voice-status'].textContent = 'TTS unavailable · Text chat active';
                 }
             });
         } catch {
-            audioReady = undefined;
             ui['voice-status'].textContent = 'TTS unavailable · Text chat active';
         }
     }
@@ -629,10 +666,10 @@ ui.composer.onsubmit = async event => {
     inputError = false;
     notice = '';
     schedule();
-    try { await window.liac.submit(id, text); }
+    try { await window.liac.submit(id, text, Boolean(voiceInput)); }
     catch {
         pending.delete(id);
-        voice.reject('hub_' + id);
+        if (voiceInput?.id === 'hub_' + id) voiceInput = undefined;
         if (!ui.transcript.value) ui.transcript.value = text;
         inputError = true;
         notice = 'Transcript could not be sent. Try again.';
@@ -658,7 +695,7 @@ ui.divider.onkeydown = event => {
 };
 
 function start() {
-    voice.clear();
+    clearVoice();
     live = session();
     ui.capture.checked = false;
     ui.retry.hidden = true;

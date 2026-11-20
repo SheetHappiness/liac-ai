@@ -1,11 +1,13 @@
 import assert from 'node:assert/strict';
-import { mkdtempSync, rmdirSync, rmSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmdirSync, rmSync } from 'node:fs';
+import { createRequire } from 'node:module';
+import { runInNewContext } from 'node:vm';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test } from 'node:test';
 
-import { VoicePlayback, playAudio } from './voice.mjs';
-import { loadSpeech, saveSpeech, speechSsml, updateSpeech } from './speech-settings.cjs';
+import { PcmPlayback, playAudio } from './voice.mjs';
+import { loadSpeech, saveSpeech, speechSsml, updateSpeech, voiceLocale } from './speech-settings.cjs';
 
 test('Azure preferences and key survive restart and drive escaped SSML', t => {
     const directory = mkdtempSync(join(tmpdir(), 'liac-speech-'));
@@ -15,7 +17,7 @@ test('Azure preferences and key survive restart and drive escaped SSML', t => {
         rmdirSync(directory);
     });
     const initial = loadSpeech(file, {});
-    assert.deepEqual(initial, { key: '', region: 'eastus', voice: 'en-US-AshleyNeural', pitch: 30, rate: 1 });
+    assert.deepEqual(initial, { key: '', region: 'eastus', voice: 'en-GB-MaisieNeural', pitch: -10, rate: 1.05 });
     const settings = updateSpeech(initial, {
         key: 'test-key', region: 'EastUS', voice: 'uk-UA-PolinaNeural', pitch: -15, rate: 1.25,
     });
@@ -40,133 +42,123 @@ test('Azure preferences and key survive restart and drive escaped SSML', t => {
     }
 });
 
-const tick = () => new Promise(resolve => setImmediate(resolve));
-
-function fixture() {
-    const requests = [], played = [], latency = [], errors = [];
-    let now = 1000;
-    let cancellations = 0;
-    const voice = new VoicePlayback({
-        now: () => now,
-        synthesize: text => new Promise(resolve => requests.push({ text, resolve })),
-        cancelSynthesis: () => { cancellations++; },
-        play: (audio, onStart, onEnd) => {
-            const item = { audio, onStart, onEnd, stopped: false };
-            played.push(item);
-            return () => { item.stopped = true; };
+test('PCM starts from the first chunk, preserves order and stops queued audio', () => {
+    const sources = [];
+    const context = {
+        currentTime: 1,
+        createBuffer(_channels, frames, rate) {
+            const samples = new Float32Array(frames);
+            return { duration: frames / rate, getChannelData: () => samples };
         },
-        onLatency: (id, result) => latency.push({ id, ...result }),
-        onError: () => errors.push('unavailable'),
-    });
-    const begin = (id, at = now) => {
-        const before = now;
-        now = at;
-        voice.submit('input-' + id);
-        voice.begin(id, ['input-' + id]);
-        now = before;
+        createBufferSource() {
+            const source = { connect() {}, disconnect() {}, start(at) { this.at = at; },
+                stop() { this.stopped = true; } };
+            sources.push(source);
+            return source;
+        },
     };
-    return { voice, requests, played, latency, errors, time: value => { now = value; },
-        begin, cancellations: () => cancellations };
-}
-
-test('plays a split sentence before commit and synthesizes one segment ahead', async () => {
-    const { voice, begin, requests, played, latency, time } = fixture();
-    begin('turn', 600);
-    voice.delta('turn', 'Hey, Lu');
-    assert.equal(requests.length, 0);
-    time(1050);
-    voice.delta('turn', 'na! Look at that. Wild');
-    assert.deepEqual(requests.map(r => r.text), ['Hey, Luna!']);
-    requests[0].resolve('audio-1');
-    await tick();
-    assert.deepEqual(played.map(p => p.audio), ['audio-1']);
-    played[0].onStart(1100);
-    assert.deepEqual(latency, [{ id: 'turn', transcriptMs: 500, previewMs: 100 }]);
-    assert.deepEqual(requests.map(r => r.text), ['Hey, Luna!', 'Look at that.']);
-    requests[1].resolve('audio-2');
-    await tick();
-    voice.finish('turn', 'Hey, Luna! Look at that. Wild');
-    assert.equal(played.length, 1);
-    assert.equal(requests.length, 2);
-    played[0].onEnd();
-    assert.deepEqual(played.map(p => p.audio), ['audio-1', 'audio-2']);
-    assert.equal(requests[2].text, 'Wild');
-    requests[2].resolve('audio-3');
-    await tick();
-    played[1].onEnd();
-    assert.deepEqual(played.map(p => p.audio), ['audio-1', 'audio-2', 'audio-3']);
+    const playback = new PcmPlayback(context);
+    const pcm = new Int16Array([-32_768, 0, 16_384]).buffer;
+    playback.push(pcm, 24_000);
+    assert.equal(sources[0].at, 1.025);
+    assert.deepEqual([...sources[0].buffer.getChannelData(0)], [-1, 0, 0.5]);
+    playback.push(pcm, 24_000);
+    assert.equal(sources[1].at, sources[0].at + sources[0].buffer.duration);
+    assert.throws(() => playback.push(new ArrayBuffer(3), 24_000));
+    playback.clear();
+    assert.ok(sources.every(source => source.stopped));
+    context.currentTime = 2;
+    playback.push(pcm, 24_000);
+    assert.equal(sources[2].at, 2.025);
+    playback.clear();
 });
 
-test('interruption stops playback and ignores late audio and deltas for that turn', async () => {
-    const { voice, begin, requests, played, latency, cancellations } = fixture();
-    begin('old');
-    voice.delta('old', 'First. Second!');
-    requests[0].resolve('first');
-    await tick();
-    voice.clear();
-    assert.equal(played[0].stopped, true);
-    assert.equal(cancellations(), 1);
-    voice.delta('old', ' Third.');
-    voice.finish('old', 'First. Second! Third.');
-    begin('new', 900);
-    voice.finish('new', 'New reply');
-    requests[1].resolve('stale');
-    requests[2].resolve('new');
-    await tick();
-    played[0].onStart(1040);
-    played[1].onStart(1050);
-    assert.deepEqual(played.map(p => p.audio), ['first', 'new']);
-    assert.deepEqual(latency, [{ id: 'new', transcriptMs: 150, previewMs: null }]);
-});
-
-test('silence, failure and a mismatched committed prefix discard provisional audio', async () => {
-    for (const final of [null, 'Different.']) {
-        const { voice, begin, requests, played } = fixture();
-        begin('turn');
-        voice.delta('turn', 'Provisional!');
-        voice.finish('turn', final);
-        requests[0].resolve('stale');
-        await tick();
-        assert.deepEqual(played, []);
+test('main streams Luna deltas directly to Azure and forwards only current PCM', () => {
+    const frames = [];
+    const synthesizers = [];
+    const require = createRequire(import.meta.url);
+    const sdk = {
+        SpeechConfig: { fromEndpoint: (url, key) => ({ url, key }) },
+        SpeechSynthesisOutputFormat: { Raw24Khz16BitMonoPcm: 'pcm' },
+        SpeechSynthesisRequestInputType: { TextStream: 3 },
+        SpeechSynthesisRequest: class {
+            writes = [];
+            inputStream = {
+                write: text => this.writes.push(text),
+                close: () => { this.closed = true; },
+            };
+        },
+        ResultReason: { SynthesizingAudioCompleted: 'completed' },
+        SpeechSynthesizer: class {
+            constructor(config) { this.config = config; synthesizers.push(this); }
+            speakAsync(request, done) { this.request = request; this.done = done; }
+            close() { this.closed = true; }
+        },
+    };
+    const mocks = {
+        electron: { app: { requestSingleInstanceLock: () => false, quit() {}, on() {} },
+            ipcMain: { handle() {} } },
+        'microsoft-cognitiveservices-speech-sdk': sdk,
+        './speech-settings.cjs': { loadSpeech: () => ({ key: 'test-key', region: 'germanywestcentral',
+            voice: 'en-GB-MaisieNeural', pitch: -10, rate: 1.05 }), voiceLocale },
+    };
+    const source = readFileSync(new URL('./main.cjs', import.meta.url), 'utf8');
+    const main = runInNewContext(source + `
+        window = testWindow;
+        ({ streamSpeech, cancelSynthesis, selectInput: id => { voiceInput = id; } });
+    `, {
+        require: name => mocks[name] ?? require(name), __dirname: tmpdir(),
+        process: { env: {}, platform: process.platform }, URL, setTimeout, clearTimeout,
+        testWindow: { isDestroyed: () => false, webContents: { send: (_channel, _stream, frame) => frames.push(frame) } },
+    });
+    const start = id => {
+        main.selectInput(id);
+        main.streamSpeech({ type: 'journal', event: { kind: 'user.message.completed', turn_id: id,
+            payload: { perception_ids: [id] } } });
+    };
+    const delta = (id, text) => main.streamSpeech({ type: 'preview', turn_id: id, text });
+    const emit = synth => synth.synthesizing?.(null, { result: { audioData: new ArrayBuffer(2) } });
+    try {
+        start('old');
+        delta('old', 'Hel');
+        const old = synthesizers[0];
+        const staleCallback = old.synthesizing;
+        assert.match(old.config.url.href, /germanywestcentral.*websocket\/v2/);
+        assert.equal(old.config.speechSynthesisVoiceName, 'en-GB-MaisieNeural');
+        assert.equal(old.config.speechSynthesisLanguage, 'en-GB');
+        assert.equal(old.request.pitch, '-10%');
+        assert.equal(old.request.rate, '+5%');
+        assert.deepEqual(old.request.writes, ['Hel']);
+        emit(old);
+        assert.deepEqual(frames.map(frame => [frame.type, frame.turn_id]), [['voice_pcm', 'old']]);
+        main.cancelSynthesis();
+        assert.ok(old.closed);
+        start('new');
+        delta('old', 'ignored');
+        delta('new', 'New');
+        staleCallback(null, { result: { audioData: new ArrayBuffer(2) } });
+        const current = synthesizers[1];
+        delta('new', ' sentence.');
+        main.streamSpeech({ type: 'journal', event: { kind: 'character.reply.completed', turn_id: 'new',
+            payload: { action: 'speak', text: 'New sentence. End.' } } });
+        assert.deepEqual(current.request.writes, ['New', ' sentence.', ' End.']);
+        assert.ok(current.request.closed);
+        emit(current);
+        current.done({ reason: 'completed', audioData: new ArrayBuffer(8) });
+        assert.deepEqual(frames.map(frame => [frame.type, frame.turn_id]), [['voice_pcm', 'old'], ['voice_pcm', 'new']]);
+        start('silent');
+        main.streamSpeech({ type: 'journal', event: { kind: 'character.reply.completed', turn_id: 'silent',
+            payload: { action: 'stay_silent', text: '' } } });
+        assert.equal(synthesizers.length, 2);
+        start('error');
+        delta('error', 'Another reply');
+        current.done({ reason: 'failed' });
+        assert.equal(frames.at(-1).type, 'voice_failed');
+        assert.equal(frames.at(-1).turn_id, 'error');
+    } finally {
+        main.cancelSynthesis();
     }
 });
-
-test('a synthesis error drops that reply and leaves the next turn usable', async () => {
-    const { voice, begin, requests, played, errors } = fixture();
-    begin('turn');
-    voice.finish('turn', 'Text remains in chat.');
-    requests[0].resolve(null);
-    await tick();
-    assert.equal(errors.length, 1);
-    begin('next');
-    voice.finish('next', 'Next');
-    requests[1].resolve('next');
-    await tick();
-    assert.deepEqual(played.map(p => p.audio), ['next']);
-});
-
-test('only a batch containing the latest submission can start speech', () => {
-    const { voice, requests } = fixture();
-    voice.submit('old-input');
-    voice.submit('new-input');
-    voice.begin('old-turn', ['old-input']);
-    voice.delta('old-turn', 'Stale!');
-    voice.finish('old-turn', 'Stale!');
-    assert.equal(requests.length, 0);
-    voice.begin('new-turn', ['other-input', 'new-input']);
-    voice.delta('new-turn', 'Current!');
-    assert.deepEqual(requests.map(r => r.text), ['Current!']);
-});
-
-test('a trailing period gets lookahead so a streamed decimal stays in one sentence', () => {
-    const { voice, begin, requests } = fixture();
-    begin('turn');
-    voice.delta('turn', 'The price is 3.');
-    assert.equal(requests.length, 0);
-    voice.delta('turn', '14 dollars. That is low.');
-    assert.deepEqual(requests.map(r => r.text), ['The price is 3.14 dollars.']);
-});
-
 test('an unavailable output clock does not stall the next fragment or report a measurement', async () => {
     const source = { connect() {}, disconnect() {}, start() {} };
     const context = { currentTime: 1, outputLatency: 0, createBufferSource: () => source,

@@ -41,12 +41,14 @@ Use **Load voices** after entering a new key or changing the region. Search
 by name, language, or locale, or enter a custom Azure voice ID. Adjust pitch
 and rate, then use **Preview** to hear the draft. **Save** applies settings to future replies
 and stores them with the key in the local, Git-ignored `.data/hub/.env` file.
-The defaults are `en-US-AshleyNeural`, pitch `+30%`, and rate `1.0`.
+The defaults are `en-GB-MaisieNeural`, pitch `-10%`, and rate `1.05`.
 Hub uses `SPEECH_KEY`, `SPEECH_REGION`, and `LIAC_TTS_VOICE` from the process
 environment when the corresponding local values are missing.
-Hub sends sentence text to Azure and plays the returned audio locally. The
-first sentence can play while Luna is still generating the reply. Submitting
-another transcript interrupts the current audio. Replay displays recorded text.
+Hub displays reply text as Luna generates it. Electron main also feeds the
+same fragments to Azure Speech TextStream and sends 24 kHz PCM chunks back
+for immediate playback. The live text and audio can begin before the reply
+is committed. Submitting another transcript interrupts the current audio.
+Replay displays committed text.
 Use **Voice** in Chat to mute speech immediately or enable it for the next
 transcript. Without Azure configuration, Hub works as a text chat.
 
