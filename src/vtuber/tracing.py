@@ -11,10 +11,9 @@ from vtuber.contracts.events import canonical_json, utc_now
 
 
 class TraceRecorder:
-    def __init__(self, root: Path, max_bytes: int = 128 * 1024 * 1024, on_record=None) -> None:
+    def __init__(self, root: Path, max_bytes: int = 128 * 1024 * 1024) -> None:
         self.path = root / ('run-' + uuid4().hex)
         self.max_bytes = max_bytes
-        self.on_record = on_record
         self.error: str | None = None
         self._bytes = 0
         self._sequence = 0
@@ -43,8 +42,6 @@ class TraceRecorder:
                 stream.write(index)
             self._sequence = sequence
             self._bytes += len(payload) + len(index)
-            if self.on_record:
-                self.on_record(row)
         except (OSError, ValueError, TypeError) as error:
             self.error = f'Trace capture stopped ({type(error).__name__}). Chat continues.'
 
@@ -52,8 +49,8 @@ class TraceRecorder:
 class QueuedTraceRecorder:
     """Freeze observations promptly; one owned thread performs all file writes."""
 
-    def __init__(self, root: Path, max_bytes: int = 128 * 1024 * 1024, on_record=None) -> None:
-        self.recorder = TraceRecorder(root, max_bytes, on_record)
+    def __init__(self, root: Path, max_bytes: int = 128 * 1024 * 1024) -> None:
+        self.recorder = TraceRecorder(root, max_bytes)
         self.path = self.recorder.path
         self.queue = Queue(maxsize=256)
         self._lock = Lock()
@@ -71,14 +68,6 @@ class QueuedTraceRecorder:
     @property
     def records_written(self):
         return self.recorder._sequence
-
-    @property
-    def on_record(self):
-        return self.recorder.on_record
-
-    @on_record.setter
-    def on_record(self, callback):
-        self.recorder.on_record = callback
 
     def __call__(self, kind: str, request_id: str, data: dict[str, object]) -> None:
         if self.error or self._closed:

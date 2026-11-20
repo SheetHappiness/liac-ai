@@ -157,6 +157,7 @@ still available.
 ```powershell
 python -m unittest discover -s tests -v
 node --test tools/luna-bridge/*.test.mjs
+npm test --prefix tools/hub
 ```
 
 See the [M6.1 perception report](docs/M6_1_BEA_PERCEPTION_REWRITE.md) for the

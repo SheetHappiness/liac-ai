@@ -11,7 +11,3 @@ dist/
 *.sqlite3-wal
 *.sqlite3-shm
 *.contexts/
-/docs
-/docs
-/docs
-/docs

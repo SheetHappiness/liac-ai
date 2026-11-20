@@ -78,14 +78,6 @@ class PerceptionBus:
             return self._take_available()
         return None
 
-    async def steer(self, *, wait_for_typing: bool = False) -> PerceptionBatch | None:
-        async with self._draining, self._changed:
-            if not self._pending:
-                return None
-            if not wait_for_typing:
-                return self._take_available()
-            return await self._settle(steering=True)
-
     def _available(self) -> list[tuple[float, Perception]]:
         key = self._pending[0][1].conversation_key
         return [(arrived, item) for arrived, item in self._pending if item.conversation_key == key]
@@ -118,7 +110,7 @@ class PerceptionBus:
     def _gap(self, item: Perception) -> float:
         return self.text_gap if item.kind == 'chat' else self.live_gap
 
-    async def _settle(self, *, steering: bool = False) -> PerceptionBatch:
+    async def _settle(self) -> PerceptionBatch:
         loop = asyncio.get_running_loop()
         ceiling = math.inf if self.max_window is None else loop.time() + self.max_window
         entries = self._available()
@@ -127,9 +119,6 @@ class PerceptionBus:
         key = entries[0][1].conversation_key
         gap = min(self._gap(item) for _, item in entries)
         quiet = entries[-1][0] + gap
-        if steering and any(item.kind != 'chat' for _, item in entries):
-            return self._take(batch_id, entries, 'immediate')
-
         while True:
             for arrived, item in self._pending[cursor:]:
                 if item.conversation_key != key:
@@ -137,8 +126,6 @@ class PerceptionBus:
                 if arrived >= min(quiet, ceiling):
                     break
                 entries.append((arrived, item))
-                if steering and item.kind != 'chat':
-                    return self._take(batch_id, entries, 'immediate')
                 gap = min(gap, self._gap(item))
                 quiet = arrived + gap
             cursor = len(self._pending)

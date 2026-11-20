@@ -105,16 +105,8 @@ class PerceptionBusTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual([p.perception_id for p in batch.items], ['old', 'new'])
         self.assertEqual(batch.closed_by, 'quiet')
 
-    async def test_steering_can_settle_text_or_take_available_items(self):
+    async def test_drain_nowait_takes_available_items_immediately(self):
         bus = PerceptionBus(text_gap=.09)
-        self.assertIsNone(await bus.steer(wait_for_typing=True))
-        await bus.publish(perception('text'))
-        waiting = asyncio.create_task(bus.steer(wait_for_typing=True))
-        await asyncio.sleep(.02)
-        self.assertFalse(waiting.done())
-        await bus.publish(perception('voice', kind='voice', delivery='ambient'))
-        batch = await asyncio.wait_for(waiting, .04)
-        self.assertEqual([p.perception_id for p in batch.items], ['text', 'voice'])
         await bus.publish(perception('new'))
         batch = bus.drain_nowait()
         self.assertEqual(batch.closed_by, 'immediate')

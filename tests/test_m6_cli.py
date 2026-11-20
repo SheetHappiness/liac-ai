@@ -28,7 +28,7 @@ class EntryPointTests(unittest.TestCase):
                     self.assertIn('Liac Single Mind', result.stdout)
                     self.assertIn('[Final] You said: Hello', result.stdout)
                     with closing(Journal(db)) as journal:
-                        self.assertEqual([e.payload['action'] for e in journal.recent_dialogue('primary')
+                        self.assertEqual([e.payload['action'] for e in journal.read('primary')
                                           if e.kind == 'character.reply.completed'], ['speak'])
 
 

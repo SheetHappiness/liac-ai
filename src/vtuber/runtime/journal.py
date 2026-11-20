@@ -178,9 +178,6 @@ class Journal:
             ORDER BY sequence LIMIT ?""", (character_id, after, limit)).fetchall()
         return tuple(self._decode(row) for row in rows)
 
-    def recent_dialogue(self, character_id: CharacterId, limit: int = 20) -> tuple[Event, ...]:
-        return tuple(reversed(list(self.iter_dialogue_newest_first(character_id, limit=limit))))
-
     def iter_dialogue_newest_first(self, character_id: CharacterId, *,
                                   limit: int = -1, after: int = 0) -> Generator[Event, None, None]:
         """Yield dialogue in reverse journal order until exhausted or closed."""
